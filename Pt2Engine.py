@@ -31,7 +31,7 @@ def ExportEngine(pt_filepath: str, engine_filepath: str, coco_filepath: str=defa
         model.export(
             workspace=10,
             format="engine",
-            batch=8,
+            batch=1,
             int8=True,
             data=coco_filepath,
             imgsz=model_img_size,
