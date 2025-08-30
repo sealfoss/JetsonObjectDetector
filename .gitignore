@@ -1,0 +1,9 @@
+models/
+.models/
+build/
+deepstream/
+cmake/
+installation/
+.venv/
+.vscode/
+__pycache__/
