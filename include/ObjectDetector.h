@@ -98,8 +98,9 @@ private:
     std::string _outputTensorName;
     Npp8u* _intPlanes[YOLO11_NUM_CHANNELS];
     Npp32f* _floatPlanes[YOLO11_NUM_CHANNELS];
+    Npp32f _consts[YOLO11_NUM_CHANNELS] = {255.0, 255.0, 255.0};
     int _intSteps[YOLO11_NUM_CHANNELS];
-    NppiSize _roi;
+    NppiSize _nppRoi;
     
     std::string Onnx2Engine(std::filesystem::path& onnxFile);
     void DetectObjects();

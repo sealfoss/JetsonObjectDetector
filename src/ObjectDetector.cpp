@@ -380,7 +380,7 @@ bool ObjectDetector::LoadModel(string modelPath)
         _intSteps[0] = _modelInW;
         _intSteps[1] = _modelInW;
         _intSteps[2] = _modelInW;
-        _roi = {(int)_modelInW, (int)_modelInH};
+        _nppRoi = {(int)_modelInW, (int)_modelInH};
 
         if(AllocateCudaBuffer(&_gpuPlanarImgBuff, _inputRgbBuffLen))
         {
@@ -492,18 +492,27 @@ bool ObjectDetector::LoadImageInput()
     const Npp8u* planarSrc = _gpuPlanarImg.data;
     Npp32f* modelIn = (float*)_gpuModelInBuff;
     int rgbStep = _gpuImg.cols * 3;
-    int planarStep = _gpuPlanarImg.cols;
     NppStatus status = nppiCopy_8u_C3P3R(
-        _gpuImg.data, rgbStep, _intPlanes, rgbStep, _roi
+        _gpuImg.data, rgbStep, _intPlanes, rgbStep, _nppRoi
     ); 
 
     if(status == NPP_NO_ERROR)
     {
         cudaStreamSynchronize(0);
         status = nppiConvert_8u32f_C3R(
-            planarSrc, _gpuPlanarImg.step, modelIn, _gpuModelInput.step, _roi
+            planarSrc, _gpuPlanarImg.step, modelIn, 
+            _gpuModelInput.step, _nppRoi
         );
-        success = status == NPP_NO_ERROR;
+        
+        if(status == NPP_NO_ERROR)
+        {
+            status = nppiDivC_32f_C3IR(
+                _consts, (float*)_gpuModelInput.data, 
+                _gpuModelInput.step, _nppRoi
+            );
+            success = status == NPP_NO_ERROR;
+        }
+
         
     }
 
