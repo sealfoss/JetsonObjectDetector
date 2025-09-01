@@ -283,6 +283,26 @@ string ObjectDetector::Onnx2Engine(fs::path& onnxFile)
     return enginePath;
 }
 
+void PrintTensorNames(const nvinfer1::ICudaEngine& engine) {
+    std::cout << "Engine has " << engine.getNbIOTensors() << " input/output tensors." << std::endl;
+
+    for (int i = 0; i < engine.getNbIOTensors(); ++i) {
+        const char* tensorName = engine.getIOTensorName(i);
+        std::cout << "Tensor " << i << " -> Name: " << tensorName;
+
+        // Determine if the tensor is an input or output
+        nvinfer1::TensorIOMode iomode = engine.getTensorIOMode(tensorName);
+        if (iomode == nvinfer1::TensorIOMode::kINPUT) {
+            std::cout << " (Input)";
+        } else if (iomode == nvinfer1::TensorIOMode::kOUTPUT) {
+            std::cout << " (Output)";
+        } else {
+            std::cout << " (Unknown)";
+        }
+        std::cout << std::endl;
+    }
+}
+
 bool ObjectDetector::LoadModel(string modelPath)
 {
     nvinfer1::ICudaEngine* engine = nullptr;
@@ -342,6 +362,7 @@ bool ObjectDetector::LoadModel(string modelPath)
     {
         cudaStreamCreate(&_stream);
         _engine = engine;
+        PrintTensorNames(*_engine);
         _inputTensorName = string(_engine->getIOTensorName(YOLO11_IN_IDX));
         _outputTensorName = string(_engine->getIOTensorName(YOLO11_OUT_IDX));
         _shapeIn = _engine->getTensorShape(_inputTensorName.c_str());
@@ -386,6 +407,9 @@ bool ObjectDetector::LoadModel(string modelPath)
     return success;
 }
 
+
+
+
 bool ObjectDetector::RunTestInference()
 {
     cuda::GpuMat gpuInput(_modelInH, _modelInW, CV_32FC3);
@@ -394,25 +418,40 @@ bool ObjectDetector::RunTestInference()
     Rect roi;
     stringstream stream;
 
-    if(testImg.cols >= (int)_modelInW && testImg.rows >= (int)_modelInH)
+    /*if(testImg.cols >= (int)_modelInW && testImg.rows >= (int)_modelInH)
     {
         roi = Rect(testImg.cols/2, testImg.rows/2, _modelInW, _modelInH);
         testInput = testImg(roi);
     }
     else
     {
-        cv::resize(
+        
+    }*/
+
+    cv::resize(
             testImg, testInput, Size(_modelInH, _modelInW), 0, 0, INTER_CUBIC
         );
-    }
 
     cvtColor(testInput, testInput, COLOR_BGR2RGB);
-    gpuInput.upload(testInput);
+    std::vector<cv::Mat> channels;
+
+    // Split the BGR image into its channels
+    cv::split(testInput, channels);
+
+    // Now, channels[0] contains the Blue channel, channels[1] the Green, and channels[2] the Red.
+    // Each of these is a separate single-channel Mat.
+
+    // Example: Displaying the individual channels (optional)
+
+    cv::Mat bgr_interleaved;
+    cv::merge(channels, bgr_interleaved);
+    
+    _gpuModelInput.upload(bgr_interleaved);
     _gpuModelOutput.upload(Mat::zeros(1, _outputLayerSize, CV_32FC1));
-    ConvertRgbaToPlanarRgbAndNormalize(
+    /*ConvertRgbaToPlanarRgbAndNormalize(
         gpuInput.ptr(), _redPlane, _greenPlane, 
         _bluePlane, _modelInW, _modelInH, _stream
-    );
+    );*/
     _context->setInputTensorAddress(_inputTensorName.c_str(), _gpuModelInBuffer);
     _context->setOutputTensorAddress( _outputTensorName.c_str(), _gpuModelOutBuffer);
     cudaStreamSynchronize(_stream);
