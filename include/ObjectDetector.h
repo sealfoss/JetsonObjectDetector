@@ -12,6 +12,8 @@
 #include <memory>
 #include <NvInfer.h>
 #include <filesystem>
+#include <nppi.h>
+#include <nppi_data_exchange_and_initialization.h>
 
 #define YOLO11_IN_IDX 0
 #define YOLO11_OUT_IDX 1
@@ -63,10 +65,12 @@ private:
 
     cv::Mat _cpuImg;
     cv::cuda::GpuMat _gpuImg;
+    cv::cuda::GpuMat _gpuPlanarImg;
     cv::cuda::GpuMat _gpuModelInput;
     cv::cuda::GpuMat _gpuModelOutput;
-    uchar* _gpuModelInBuffer = nullptr;
-    uchar* _gpuModelOutBuffer = nullptr;
+    uchar* _gpuPlanarImgBuff = nullptr;
+    uchar* _gpuModelInBuff = nullptr;
+    uchar* _gpuModelOutBuff = nullptr;
     float* _redPlane = nullptr;
     float* _greenPlane = nullptr;
     float* _bluePlane = nullptr;
@@ -84,7 +88,7 @@ private:
     uint64_t _modelInW = 0;
     uint64_t _planeSize = 0;
     uint64_t _outputLayerSize = 0;
-    uint64_t _inputLayerSize = 0;
+    uint64_t _inputRgbBuffLen = 0;
     uint64_t _outputLayerByteLen = 0;
     uint64_t _inputLayerByteLen = 0;
     uint64_t _attribsSize = 0;
@@ -92,13 +96,17 @@ private:
     uint64_t _numClasses = 0;
     std::string _inputTensorName;
     std::string _outputTensorName;
+    Npp8u* _intPlanes[YOLO11_NUM_CHANNELS];
+    Npp32f* _floatPlanes[YOLO11_NUM_CHANNELS];
+    int _intSteps[YOLO11_NUM_CHANNELS];
+    NppiSize _roi;
     
     std::string Onnx2Engine(std::filesystem::path& onnxFile);
     void DetectObjects();
     void RunInference(GstBuffer* buffer);
     bool LoadModel(std::string modelPath);
     bool AllocateInputBuffer();
-    bool LoadImageInput(bool checkDims=false);
+    bool LoadImageInput();
     inline void UpdateFrameDims();
     inline void CreateGpuImg(uchar* img);
     inline void CreateCpuImg();

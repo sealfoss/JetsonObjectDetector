@@ -373,30 +373,48 @@ bool ObjectDetector::LoadModel(string modelPath)
         _detectsSize = _shapeOut.d[YOLO11_DETECT_IDX];
         _numClasses = _attribsSize - YOLO11_CLASSES_OFFSET;
         _planeSize = _modelInH * _modelInW;
-        _inputLayerSize = _modelInW * _modelInH * YOLO11_NUM_CHANNELS;
+        _inputRgbBuffLen = _planeSize * YOLO11_NUM_CHANNELS;
         _outputLayerSize = _attribsSize * _detectsSize;
-        _inputLayerByteLen = _inputLayerSize * sizeof(float);
+        _inputLayerByteLen = _inputRgbBuffLen * sizeof(float);
         _outputLayerByteLen = _outputLayerSize * sizeof(float);
+        _intSteps[0] = _modelInW;
+        _intSteps[1] = _modelInW;
+        _intSteps[2] = _modelInW;
+        _roi = {(int)_modelInW, (int)_modelInH};
 
-        if(AllocateCudaBuffer(&_gpuModelInBuffer, _inputLayerByteLen))
+        if(AllocateCudaBuffer(&_gpuPlanarImgBuff, _inputRgbBuffLen))
         {
-            _gpuModelInput = cuda::GpuMat(
-                _modelInH, _modelInW, CV_32FC3, _gpuModelInBuffer
+            _gpuPlanarImg = cuda::GpuMat(
+                _modelInH, _modelInW, CV_8UC3, _gpuPlanarImgBuff
             );
-            _redPlane = (float*)_gpuModelInBuffer;
-            _greenPlane = _redPlane + _planeSize;
-            _bluePlane = _greenPlane + _planeSize;
-
-            if(AllocateCudaBuffer(&_gpuModelOutBuffer, _outputLayerByteLen))
-            {
-                _gpuModelOutput = cuda::GpuMat(
-                    1, _outputLayerSize, CV_32FC1, _gpuModelOutBuffer
-                );
-            }
-
-            success = RunTestInference();
+            _intPlanes[0] = _gpuPlanarImgBuff;
+            _intPlanes[1] = (_gpuPlanarImgBuff + _planeSize);
+            _intPlanes[2] = (_gpuPlanarImgBuff + (_planeSize * 2));
         }
 
+        if(AllocateCudaBuffer(&_gpuModelInBuff, _inputLayerByteLen))
+        {
+            _gpuModelInput = cuda::GpuMat(
+                _modelInH, _modelInW, CV_32FC3, _gpuModelInBuff
+            );
+            _redPlane = (float*)_gpuModelInBuff;
+            _greenPlane = _redPlane + _planeSize;
+            _bluePlane = _greenPlane + _planeSize;
+            _floatPlanes[0] = _redPlane;
+            _floatPlanes[1] = _greenPlane;
+            _floatPlanes[2] = _bluePlane;
+        }
+
+        if(AllocateCudaBuffer(&_gpuModelOutBuff, _outputLayerByteLen))
+        {
+            _gpuModelOutput = cuda::GpuMat(
+                1, _outputLayerSize, CV_32FC1, _gpuModelOutBuff
+            );
+        }
+
+        if(_gpuPlanarImgBuff && _gpuModelInBuff && _gpuModelOutBuff)
+            success = RunTestInference();
+        
         if(success)
             msg = "Model loaded from Tensor RT .engine file successfully.";
         else
@@ -418,22 +436,12 @@ bool ObjectDetector::RunTestInference()
     Rect roi;
     stringstream stream;
 
-    /*if(testImg.cols >= (int)_modelInW && testImg.rows >= (int)_modelInH)
-    {
-        roi = Rect(testImg.cols/2, testImg.rows/2, _modelInW, _modelInH);
-        testInput = testImg(roi);
-    }
-    else
-    {
-        
-    }*/
-
     cv::resize(
-            testImg, testInput, Size(_modelInH, _modelInW), 0, 0, INTER_CUBIC
-        );
-
+        testImg, testInput, Size(_modelInW, _modelInH), 0, 0, INTER_CUBIC
+    );
     cvtColor(testInput, testInput, COLOR_BGR2RGB);
-    std::vector<cv::Mat> channels;
+    _gpuImg.upload(testInput);
+    /*std::vector<cv::Mat> channels;
 
     // Split the BGR image into its channels
     cv::split(testInput, channels);
@@ -448,27 +456,61 @@ bool ObjectDetector::RunTestInference()
     
     _gpuModelInput.upload(bgr_interleaved);
     _gpuModelOutput.upload(Mat::zeros(1, _outputLayerSize, CV_32FC1));
-    /*ConvertRgbaToPlanarRgbAndNormalize(
+    ConvertRgbaToPlanarRgbAndNormalize(
         gpuInput.ptr(), _redPlane, _greenPlane, 
         _bluePlane, _modelInW, _modelInH, _stream
     );*/
-    _context->setInputTensorAddress(_inputTensorName.c_str(), _gpuModelInBuffer);
-    _context->setOutputTensorAddress( _outputTensorName.c_str(), _gpuModelOutBuffer);
-    cudaStreamSynchronize(_stream);
-    _context->enqueueV3(_stream);
-    cudaStreamSynchronize(_stream);
-    std::vector<float> outputData(_outputLayerSize);
-    cudaMemcpy(outputData.data(), _gpuModelOutput.ptr(), _outputLayerSize * sizeof(float), cudaMemcpyDeviceToHost);
 
-    stream << "M = " << endl;
-    for(float f : outputData)
-        if(f > 0)
-            stream << to_string(f) << ", ";
-    stream << "\nEnd M\n";
-    LogDebug(stream.str());
+    if(LoadImageInput())
+    {
+        _context->setInputTensorAddress(_inputTensorName.c_str(), _gpuModelInBuff);
+        _context->setOutputTensorAddress( _outputTensorName.c_str(), _gpuModelOutBuff);
+        cudaStreamSynchronize(_stream);
+        _context->enqueueV3(_stream);
+        cudaStreamSynchronize(_stream);
+        std::vector<float> outputData(_outputLayerSize);
+        cudaMemcpy(outputData.data(), _gpuModelOutput.ptr(), _outputLayerSize * sizeof(float), cudaMemcpyDeviceToHost);
+
+        stream << "M = " << endl;
+        for(float f : outputData)
+            if(f > 0)
+                stream << to_string(f) << ", ";
+        stream << "\nEnd M\n";
+        LogDebug(stream.str());
+    }
+    else
+        LogErr("Failed to load image into model.");
     exit(1);
     return true;
 }
+
+
+bool ObjectDetector::LoadImageInput()
+{
+    bool success = false;
+    const Npp8u* rgbSrc = _gpuImg.data;
+    const Npp8u* planarSrc = _gpuPlanarImg.data;
+    Npp32f* modelIn = (float*)_gpuModelInBuff;
+    int rgbStep = _gpuImg.cols * 3;
+    int planarStep = _gpuPlanarImg.cols;
+    NppStatus status = nppiCopy_8u_C3P3R(
+        _gpuImg.data, rgbStep, _intPlanes, rgbStep, _roi
+    ); 
+
+    if(status == NPP_NO_ERROR)
+    {
+        cudaStreamSynchronize(0);
+        status = nppiConvert_8u32f_C3R(
+            planarSrc, _gpuPlanarImg.step, modelIn, _gpuModelInput.step, _roi
+        );
+        success = status == NPP_NO_ERROR;
+        
+    }
+
+    cudaStreamSynchronize(0);
+    return success;
+}
+
 
 bool ObjectDetector::CheckImageDims(cuda::GpuMat& img)
 {
@@ -476,19 +518,6 @@ bool ObjectDetector::CheckImageDims(cuda::GpuMat& img)
     bool heightGood = widthGood && img.rows == _shapeIn.d[1];
     bool channelsGood = heightGood && img.channels() == 4;
     return channelsGood;
-}
-
-bool ObjectDetector::LoadImageInput(bool checkDims)
-{
-    if(checkDims)
-    {
-        LogDebug("Checking image dimensions...");
-    }
-
-    ConvertRgbaToPlanarRgbAndNormalize(
-        _gpuImg.ptr(), _redPlane, _greenPlane, _bluePlane, _modelInW, _modelInH
-    );
-   return false;
 }
 
 bool ObjectDetector::AllocateCudaBuffer(uchar** buffer, size_t buffLen)
