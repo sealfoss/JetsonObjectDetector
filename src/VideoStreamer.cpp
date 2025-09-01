@@ -23,10 +23,10 @@ using namespace cv;
 #define VS_CHECK_DIMS (GstPadProbeType)(GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM)
 
 VideoStreamer::VideoStreamer(
-    string pipelineDescription, BufferConsumer* consumer
+    string pipelineDescription, BufferConsumer* consumer, bool autoStart
 ) : _description(pipelineDescription), _consumer(consumer)
 {
-    if(BuildPipeline())
+    if(autoStart)
         Start();
 }
 
@@ -266,13 +266,16 @@ bool VideoStreamer::Start()
 {
     bool success = false;
     
-    LockStream(true);
-    if (!_capturing)
+    if(BuildPipeline())
     {
-        _thread = std::thread(&VideoStreamer::ConsumeStreamVideo, this);
-        success = true;
+        LockStream(true);
+        if (!_capturing)
+        {
+            _thread = std::thread(&VideoStreamer::ConsumeStreamVideo, this);
+            success = true;
+        }
+        UnlockStream(true);
     }
-    UnlockStream(true);
     return success;
 }
 

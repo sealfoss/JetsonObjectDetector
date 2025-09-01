@@ -26,6 +26,11 @@ static inline unsigned int GetPitch(unsigned int width, const unsigned int strid
 }
 #endif /* JP4 */
 
+// This example would just draw a 200x200 green rectangle starting at (100,100) so resolution is expected to be at least 500 for height and width  
+static cv::Rect roi(100,100,200,200); 
+static cv::Rect roi2(50,50,100,100); // for half size planes such as U&V in NV12 format
+
+
 NvBufProcessor::NvBufProcessor()
 {
 
@@ -149,12 +154,6 @@ void NvBufProcessor::Unmap()
 
     _width = _height = _pitch = _byteLen = 0;
 }
-
-
-// This example would just draw a 200x200 green rectangle starting at (100,100) so resolution is expected to be at least 500 for height and width  
-static cv::Rect roi(100,100,200,200); 
-static cv::Rect roi2(50,50,100,100); // for half size planes such as U&V in NV12 format
-
 
 static void CvCudaProcessRGBA(const unsigned int height, const unsigned int pitch, uchar * bufPtr) {
     g_print("RGBA processing using pitch %d\n", pitch);

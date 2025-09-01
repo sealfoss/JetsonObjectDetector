@@ -7,8 +7,6 @@
 #include <thread>
 #include <condition_variable>
 
-namespace Logging
-{
 
 class AsyncLogger : public Logger
 {
@@ -30,5 +28,4 @@ private:
     void AddMessage(std::tuple<std::string, LogLevel, uint64_t> msg) override;
 };
 
-};
 #endif //ASYNCLOGGER_H

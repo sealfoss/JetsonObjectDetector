@@ -2,7 +2,6 @@
 #include <iostream>
 
 using namespace std;
-using namespace Logging;
 
 
 AsyncLogger::AsyncLogger(string logDirectory, LogLevel minLevel) 

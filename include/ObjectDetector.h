@@ -9,7 +9,20 @@
 #include <gstreamer-1.0/gst/gst.h>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/cuda.hpp>
+#include <memory>
+#include <NvInfer.h>
+#include <filesystem>
 
+#define YOLO11_IN_IDX 0
+#define YOLO11_OUT_IDX 1
+#define YOLO11_H_IDX 2
+#define YOLO11_W_IDX 3
+#define YOLO11_ATTRIB_IDX 1
+#define YOLO11_DETECT_IDX 2
+#define YOLO11_CLASSES_OFFSET 4
+#define YOLO11_NUM_CHANNELS 3
+
+class AsyncLogger;
 class NvBufProcessor;
 class BufferConsumer;
 class VideoStreamer;
@@ -32,6 +45,7 @@ public:
     BufferConsumer* GetConsumer() { return _consumer; }
 
 private:
+    AsyncLogger* _logger = nullptr;
     VideoStreamer* _streamer = nullptr;
     BufferConsumer* _consumer = nullptr;
     NvBufProcessor* _processor = nullptr;
@@ -47,16 +61,52 @@ private:
     int _frameByteLen = 0;
     int _frameType = 0;
 
-    cv::Mat _imgCpu;
-    cv::cuda::GpuMat _imgGpu;
-
+    cv::Mat _cpuImg;
+    cv::cuda::GpuMat _gpuImg;
+    cv::cuda::GpuMat _gpuModelInput;
+    cv::cuda::GpuMat _gpuModelOutput;
+    uchar* _gpuModelInBuffer = nullptr;
+    uchar* _gpuModelOutBuffer = nullptr;
+    float* _redPlane = nullptr;
+    float* _greenPlane = nullptr;
+    float* _bluePlane = nullptr;
+    nvinfer1::ICudaEngine* _engine = nullptr;
+    nvinfer1::IExecutionContext* _context = nullptr;
+    nvinfer1::IRuntime* _runtime = nullptr;
+    nvinfer1::Dims _shapeIn;
+    nvinfer1::Dims _shapeOut;
+    cudaStream_t _stream;
+    uint64_t _engineLen = 0;
+    uint64_t _imgW = 0;
+    uint64_t _imgH = 0;
+    uint64_t _imgC = 0;
+    uint64_t _modelInH = 0;
+    uint64_t _modelInW = 0;
+    uint64_t _planeSize = 0;
+    uint64_t _outputLayerSize = 0;
+    uint64_t _inputLayerSize = 0;
+    uint64_t _outputLayerByteLen = 0;
+    uint64_t _inputLayerByteLen = 0;
+    uint64_t _attribsSize = 0;
+    uint64_t _detectsSize = 0;
+    uint64_t _numClasses = 0;
+    std::string _inputTensorName;
+    std::string _outputTensorName;
+    
+    std::string Onnx2Engine(std::filesystem::path& onnxFile);
     void DetectObjects();
     void RunInference(GstBuffer* buffer);
     bool LoadModel(std::string modelPath);
+    bool AllocateInputBuffer();
+    bool LoadImageInput(bool checkDims=false);
     inline void UpdateFrameDims();
     inline void CreateGpuImg(uchar* img);
     inline void CreateCpuImg();
     inline void WriteCpuImg();
+    inline bool CheckImageDims(cv::cuda::GpuMat& img);
+    inline bool RunTestInference();
+    inline bool AllocateCudaBuffer(uchar** buffer, std::size_t buffLen);
+    inline bool DeallocateCudaBuffer(uchar** buffer);
 };
 
 #endif // OBJECTDETECTOR_H

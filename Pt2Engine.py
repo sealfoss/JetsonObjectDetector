@@ -2,8 +2,15 @@ from ultralytics import YOLO
 import os
 import sys
 
-model_img_size = (704, 1280) # Width and height need to be multples of 32
-model_device = 0 #"dla:0" is another option, but good luck getting it to work.
+export_img_size = (704, 1280) # Width and height need to be multples of 32
+export_device = 0 #"dla:0" is another option, but good luck getting it to work.
+export_batch = 1
+export_workspace = None
+export_format = "engine"
+export_int8 = True
+export_nms = False
+export_simplify = True
+export_dynamic = False
 
 default_models_dir = os.path.join(os.path.curdir, "models")
 default_coco_path = os.path.join(default_models_dir, "coco.yaml")
@@ -23,19 +30,36 @@ def Detect(model_filepath: str, image_filepath: str=default_lenna_path):
         print(msg)
     return success
 
+export_args: dict={
+	"workspace": export_workspace,
+	"format": export_format,
+	"batch": export_batch,
+	"int8": export_int8,
+	"data": default_coco_path,
+	"imgsz": export_img_size,
+	"device": export_device,
+    "simplify": export_simplify,
+    "nms": export_nms,
+    "dynamic": export_dynamic
+}
+
 def ExportEngine(pt_filepath: str, engine_filepath: str, coco_filepath: str=default_coco_path):
     success = False
     print(f"Attempting export of .engine model file from .pt model file at path: {pt_filepath}")
+    print(f"Export arguments:\n{str(export_args)}\n")
     try:
         model = YOLO(pt_filepath)
         model.export(
-            workspace=10,
-            format="engine",
-            batch=1,
-            int8=True,
-            data=coco_filepath,
-            imgsz=model_img_size,
-            device=model_device
+            workspace=export_workspace,
+            format=export_format,
+            batch=export_batch,
+            int8=export_int8,
+            data=default_coco_path,
+            imgsz=export_img_size,
+            device=export_device,
+            simplify=export_simplify,
+            nms=export_nms,
+            dynamic=export_dynamic
         )
         success = os.path.isfile(engine_filepath)
     except Exception as e:

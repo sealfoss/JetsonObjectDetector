@@ -10,6 +10,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 
 
+
 # Find OpenCV
 find_package(OpenCV REQUIRED)
 message(STATUS "OpenCV found: ${OpenCV_VERSION}")
@@ -22,6 +23,7 @@ if (CUDAToolkit_FOUND)
   message(STATUS "CUDAToolkit found")
   message(STATUS "CUDA libraries: ${CUDA_LIBRARIES}")
 endif()
+
 
 # Find TensorRt
 set(TENSORRT_LIB "/usr/lib/aarch64-linux-gnu/")
@@ -105,6 +107,13 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic -O3)
 endif()
+
+target_compile_options(${PROJECT_NAME} PRIVATE
+    # This passes the -Wno-pedantic flag to the host compiler via nvcc
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-pedantic>
+    # This disables all warnings from nvcc itself
+    $<$<COMPILE_LANGUAGE:CUDA>:-w>
+)
 
 # Install rules (optional)
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)

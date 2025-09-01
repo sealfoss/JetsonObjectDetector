@@ -19,27 +19,27 @@ static string s_LogLevelNames[] = {
 
 void LogErr(const string& message)
 {
-    s_Instance->Log(message, LOG_ERROR);
+    s_Instance->LogMsg(message, LOG_ERROR);
 }
 
 void LogWarn(const string& message)
 {
-    s_Instance->Log(message, LOG_WARNING);
+    s_Instance->LogMsg(message, LOG_WARNING);
 }
 
 void LogDebug(const string& message)
 {
-    s_Instance->Log(message, LOG_DEBUG);
+    s_Instance->LogMsg(message, LOG_DEBUG);
 }
 
 void LogInfo(const string& message)
 {
-    s_Instance->Log(message, LOG_INFO);
+    s_Instance->LogMsg(message, LOG_INFO);
 }
 
 void LogTrace(const string& message)
 {
-    s_Instance->Log(message, LOG_VERBOSE);
+    s_Instance->LogMsg(message, LOG_VERBOSE);
 }
 
 
@@ -73,7 +73,7 @@ Logger::~Logger()
         s_Instance = nullptr;
 }
 
-void Logger::Log(const string& message, const LogLevel level)
+void Logger::LogMsg(const string& message, const LogLevel level)
 {
     uint64_t utcNs;
     tuple<string, LogLevel, uint64_t> msg;

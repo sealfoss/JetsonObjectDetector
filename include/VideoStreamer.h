@@ -24,7 +24,8 @@ class BufferConsumer;
 class VideoStreamer {
 public:
     VideoStreamer(
-        std::string pipelineDescription, BufferConsumer* consumer=nullptr
+        std::string pipelineDescription, BufferConsumer* consumer=nullptr,
+        bool autoStart=false
     );
     virtual ~VideoStreamer();
 
