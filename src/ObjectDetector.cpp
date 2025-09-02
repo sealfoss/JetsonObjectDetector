@@ -401,7 +401,11 @@ bool ObjectDetector::LoadModel(string modelPath)
         _intSteps[1] = _modelInW;
         _intSteps[2] = _modelInW;
         _nppRoi = {(int)_modelInW, (int)_modelInH};
-        InitializeDetectionsData(_predictionsLen);
+        _detections = std::vector<Detection>(_predictionsLen);
+        _ids = std::vector<int>(_predictionsLen);
+        _idxs = std::vector<int>(_predictionsLen);
+        _scores = std::vector<float>(_predictionsLen);
+        _bboxes = std::vector<cv::Rect>(_predictionsLen);
         success = AllocateCudaBuffer(&_gpuPlanarImgBuff, _inputRgbBuffLen);
 
         if(success)
@@ -455,7 +459,8 @@ bool ObjectDetector::LoadModel(string modelPath)
             _gpuModelOutT = cuda::GpuMat(
                 _predictionsLen, _detectionInfoLen, CV_32FC1, _gpuModelOutTBuff
             );
-            _cpuModelOutput = Mat(_predictionsLen, _detectionInfoLen, CV_32FC1);
+            _cpuModelOutput = 
+                Mat(_predictionsLen, _detectionInfoLen, CV_32FC1);
         }
 
         if(success && TestInference())
@@ -506,167 +511,76 @@ bool ObjectDetector::LoadImageInput()
 
     return success;
 }
-struct BoundingBox {
-    float x, y, w, h;
-    float score;
-    int class_id;
-};
 
 bool ObjectDetector::ProcessModelOutput()
 {
     stringstream stream;
-    bool success;
-    DetectionData detection;
     cv::Mat objClass, prediction, scores;
-    int i;
-    int candididateNum = 0;
-    float confidence = 0;
-    float* predictionPtr = nullptr;
-    float* firstElement = nullptr;
-    float* lastElement = nullptr;
-    float* maxElement = nullptr;
-    float maxConf = 0;
-    float minConf = GetMinConfidence();
+    int i, classId;
+    float confidence, minConf, iou, x, y, w, h, halfW, halfH;
+    float *predictionPtr, *firstElement, *lastElement, *maxElement;
+    Detection detection;
+    
+    iou = GetIouThreshold();
+    minConf = GetMinConfidence();
     cuda::transpose(_gpuModelOut, _gpuModelOutT);
     _gpuModelOutT.download(_cpuModelOutput);
-    std::vector<BoundingBox> boxes;
+    _bboxes.clear();
+    _scores.clear();
+    _ids.clear();
+    _idxs.clear();
 
     for(i = 0; i < _cpuModelOutput.rows; i++)
     {
+        
         prediction = _cpuModelOutput.row(i);
         predictionPtr = (float*)prediction.data;
-        firstElement = predictionPtr + 4;
+        firstElement = ((float*)prediction.data) + 4;
         lastElement = firstElement + 80;
         maxElement = std::max_element(firstElement, lastElement);
         confidence = *maxElement;
-        if(confidence > maxConf)
-            maxConf = confidence;
         if(confidence > minConf)
         {
-            detection = DetectionData();
-            detection.x = sigmoid(*predictionPtr);
-            detection.y = sigmoid(*(predictionPtr+1));
-            detection.w = sigmoid(*(predictionPtr+2));
-            detection.h = sigmoid(*(predictionPtr+3));
-            detection.confidence = confidence;
-            detection.classId = maxElement - firstElement;
-            SetCandidate(candididateNum, detection);
-            candididateNum++;
+            classId = maxElement - firstElement;
+            x = (*predictionPtr);
+            y = (*(predictionPtr+1));
+            w = (*(predictionPtr+2));
+            h = (*(predictionPtr+3));
+            halfW = w * 0.5f;
+            halfH = h * 0.5f;
+            _bboxes.push_back(Rect2f(x-halfW, y-halfH, x+halfW, y+halfW));
+            _scores.push_back(confidence);
+            _ids.push_back(classId);
         }
     }
 
-    LogDebug("Max Conf: " + to_string(maxConf));
-    success = NonMaxSuppression(candididateNum + 1);
-    return success;
-}
-
-bool ObjectDetector::NonMaxSuppression(int numCandidates)
-{
-    bool success = false;
-    int i, j;
-    DetectionData& a = _detections.candidates[0];
-    DetectionData& b = _detections.candidates[0];
-    float iouThresh = GetIouThreshold();
-    SortCandidates();
-    ResetFinalDetections();
-    
-    for(i = 0; i < numCandidates; i++)
+    dnn::NMSBoxes(_bboxes, _scores, minConf, iou, _idxs);
+    _detectionsMutex.lock();
+    _detections.clear();
+    for(int idx : _idxs)
     {
-        a = _detections.candidates[i];
-        if(a.keep)
-        {
-            _detections.final.push_back(a);
-            _detections.numDetections++;
-            for(j = i+1; j < numCandidates; j++)
-            {
-                b = _detections.candidates[j];
-                if(b.keep && a.classId == b.classId)
-                {
-                    if(CalculateIou(a, b) > iouThresh)
-                        b.keep = false;
-                }
-            }
-        }
+        _detections.push_back(
+            Detection {_ids[idx], _scores[idx], _bboxes[idx]}
+        );
     }
-
-    _detections.mutex.lock();
-    success = _detections.detectionsValid = _detections.numDetections > 0;
-    _detections.mutex.unlock();
-    return success;
+    _detectionsMutex.unlock();
+    return _idxs.size() > 0;
 }
 
-float ObjectDetector::CalculateIou(DetectionData& a, DetectionData& b)
+vector<Detection> ObjectDetector::GetLatestDetections()
 {
-    float x1 = max(a.x, b.x);
-    float y1 = max(a.y, b.y);
-    float x2 = min(a.x + a.w, b.x + b.w);
-    float y2 = min(a.y + a.h, b.y + b.h);
-    float intersection = max(0.0f, x2 - x1) * max(0.0f, y2 - y1);
-    float union_area = a.w * a.h + b.w * b.h - intersection;
-    return (union_area > 0.0f) ? intersection / union_area : 0.0f;
+    vector<Detection> detections;
+    _detectionsMutex.lock();
+    for(Detection detection : _detections)
+        detections.push_back(detection);
+    _detectionsMutex.unlock();
+    return detections;
 }
 
-void ObjectDetector::SortCandidates()
-{
-    sort(
-        _detections.candidates.begin(), 
-        _detections.candidates.end(), 
-        [](const DetectionData& a, const DetectionData& b) 
-        { 
-            return a.confidence > b.confidence;
-        }
-    );
-}
-
-void ObjectDetector::ResetFinalDetections()
-{
-    _detections.mutex.lock();
-    _detections.final.clear();
-    _detections.numDetections = 0;
-    _detections.detectionsValid = false;
-    _detections.mutex.unlock();
-}
-
-void ObjectDetector::ResetDetectionCandidates()
-{
-    _detections.numCandidates = 0;
-    _detections.candidates.clear();
-}
-
-
-void ObjectDetector::SetCandidate(int idx, DetectionData candidate)
-{
-    _detections.candidates[idx] = candidate;
-    _detections.numCandidates = idx+1;
-}
-
-void ObjectDetector::InitializeDetectionsData(int maxNumDetections)
-{
-    _detections.mutex.lock();
-    _detections.final = vector<DetectionData>(maxNumDetections);
-    _detections.candidates = vector<DetectionData>(maxNumDetections);
-    _detections.numCandidates = _detections.numDetections = 0;
-    _detections.detectionsValid = false;
-    _detections.mutex.unlock();
-}
-
-vector<DetectionData> ObjectDetector::GetLatestDetections()
-{
-    vector<DetectionData> dets;
-    int i;
-    _detections.mutex.lock_shared();
-    if(_detections.detectionsValid)
-    {
-        for(i = 0; i < _detections.numDetections; i++)
-            dets.push_back(_detections.final[i]);
-    }
-    _detections.mutex.unlock_shared();
-    return dets;
-}
 
 bool ObjectDetector::TestInference()
 {
-    vector<DetectionData> detections;
+    vector<Detection> detections;
     string msg;
     cuda::GpuMat gpuInput(_modelInH, _modelInW, CV_32FC3);
     Mat testImg = cv::imread(_testFilepath);

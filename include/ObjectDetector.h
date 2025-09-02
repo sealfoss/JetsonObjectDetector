@@ -37,7 +37,7 @@
 #define OD_DEFAULT_CLASSES_OFFSET 4
 #define OD_DEFAULT_NUM_CHANNELS 3
 #define OD_INPUT_MAG 255.0
-#define OD_TEST_FILE "../models/Lenna.jpg"
+#define OD_TEST_FILE "../models/Toothbrush.jpg"
 
 
 class AsyncLogger;
@@ -46,27 +46,13 @@ class BufferConsumer;
 class VideoStreamer;
 struct VideoFrameInfo;
 
-struct DetectionData
+struct Detection
 {
-    float x = -1;
-    float y = -1;
-    float w = -1;
-    float h = -1;
-    float confidence = -1;
-    int classId = -1;
-    bool keep = true;
+    int classId = 0;
+    float confidence = 0;
+    cv::Rect2f bbox;
 };
 
-struct DetectionsData
-{
-    std::vector<DetectionData> final;
-    std::vector<DetectionData> candidates;
-    std::shared_mutex mutex;
-    int numDetections = -1;
-    int numCandidates = -1;
-    int maxDetections = -1;
-    bool detectionsValid = false;
-};
 
 class ObjectDetector
 {
@@ -98,7 +84,7 @@ public:
     bool WasCpuImageUpdated();
     cv::Mat GetCpuImage();
     void Notify();
-    std::vector<DetectionData> GetLatestDetections();
+    std::vector<Detection> GetLatestDetections();
     
     BufferConsumer* GetConsumer() { return _consumer; }
 
@@ -121,6 +107,7 @@ private:
     NvBufProcessor* _processor = nullptr;
     std::shared_mutex _mutex;
     std::mutex _condMutex;
+    std::shared_mutex _detectionsMutex;
     std::condition_variable _cv;
     std::thread _thread;
     bool _cpuImgUpdated = false;
@@ -175,7 +162,13 @@ private:
     std::vector<std::string> _inputTensorNames;
     std::vector<std::string> _outputTensorNames;
     std::vector<uchar**> _buffs;
-    DetectionsData _detections;
+
+    
+    std::vector<int> _idxs;
+    std::vector<int> _ids;
+    std::vector<cv::Rect> _bboxes;
+    std::vector<float> _scores;
+    std::vector<Detection> _detections;
     
     void GetTensorNames(const nvinfer1::ICudaEngine& engine);
     std::string Onnx2Engine(std::filesystem::path& onnxFile);
@@ -192,13 +185,6 @@ private:
     inline bool CheckImageDims(cv::cuda::GpuMat& img);
     inline bool AllocateCudaBuffer(uchar** buffer, std::size_t buffLen);
     inline bool DeallocateCudaBuffer(uchar** buffer);
-    inline void SetCandidate(int idx, DetectionData candidate);
-    inline void ResetFinalDetections();
-    inline void ResetDetectionCandidates();
-    inline void InitializeDetectionsData(int maxNumDetections);
-    inline void SortCandidates();
-    inline float CalculateIou(DetectionData& a, DetectionData&b);
-    inline bool NonMaxSuppression(int numCandidates);
 };
 
 #endif // OBJECTDETECTOR_H
