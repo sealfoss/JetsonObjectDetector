@@ -24,17 +24,72 @@
 #define YOLO11_CLASSES_OFFSET 4
 #define YOLO11_NUM_CHANNELS 3
 
+#define OD_DEFAULT_MIN_CONFIDENCE 0.6f
+#define OD_DEFAULT_IOU_THRESHOLD 0.45f
+#define OD_DEFAULT_MAX_DET 1000
+#define OD_DEFAULT_NUM_CHANS 3
+#define OD_DEFAULT_IN_IDX 0
+#define OD_DEFAULT_OUT_IDX 1
+#define OD_DEFAULT_H_IDX 2
+#define OD_DEFAULT_W_IDX 3
+#define OD_DEFAULT_DET_INFO_LEN_IDX 1
+#define OD_DEFAULT_DET_PROPOSALS_LEN_IDX 2
+#define OD_DEFAULT_CLASSES_OFFSET 4
+#define OD_DEFAULT_NUM_CHANNELS 3
+#define OD_INPUT_MAG 255.0
+#define OD_TEST_FILE "../models/Lenna.jpg"
+
+
 class AsyncLogger;
 class NvBufProcessor;
 class BufferConsumer;
 class VideoStreamer;
 struct VideoFrameInfo;
 
+struct DetectionData
+{
+    float x = -1;
+    float y = -1;
+    float w = -1;
+    float h = -1;
+    float confidence = -1;
+    int classId = -1;
+    bool keep = true;
+};
+
+struct DetectionsData
+{
+    std::vector<DetectionData> final;
+    std::vector<DetectionData> candidates;
+    std::shared_mutex mutex;
+    int numDetections = -1;
+    int numCandidates = -1;
+    int maxDetections = -1;
+    bool detectionsValid = false;
+};
+
 class ObjectDetector
 {
 public:
-    ObjectDetector();
+    ObjectDetector(
+        float minConfidence=OD_DEFAULT_MIN_CONFIDENCE,
+        float iouThreshold=OD_DEFAULT_IOU_THRESHOLD,
+        int maxDetections=OD_DEFAULT_MAX_DET,
+        int numChans=OD_DEFAULT_NUM_CHANS,
+        int inTensoridx=OD_DEFAULT_IN_IDX,
+        int outTensoridx=OD_DEFAULT_OUT_IDX,
+        int heightIdx=OD_DEFAULT_H_IDX,
+        int widthIdx=OD_DEFAULT_W_IDX,
+        int detectionInfoLenIdx=OD_DEFAULT_DET_INFO_LEN_IDX,
+        int proposalsLenIdx=OD_DEFAULT_DET_PROPOSALS_LEN_IDX,
+        int classesOffset=OD_DEFAULT_CLASSES_OFFSET,
+        std::string testFilepath=OD_TEST_FILE
+    );
     ~ObjectDetector();
+    float GetMinConfidence();
+    bool SetMinConfidence(float minConf);
+    float GetIouThreshold();
+    bool SetIouThreshold(float iouThresh);
     void OpenVideoStream(std::string pipleineDescription);
     void CloseVideoStream();
     bool StartDetecting(std::string modelPath);
@@ -43,10 +98,23 @@ public:
     bool WasCpuImageUpdated();
     cv::Mat GetCpuImage();
     void Notify();
+    std::vector<DetectionData> GetLatestDetections();
     
     BufferConsumer* GetConsumer() { return _consumer; }
 
 private:
+    const int _maxDets;
+    const int _numChans;
+    const int _inIdx;
+    const int _outIdx;
+    const int _hIdx;
+    const int _wIdx;
+    const int _detectionInfoLenIdx;
+    const int _proposalsLenIdx;
+    const int _classOffset;
+    const std::string _testFilepath;
+    float _minConf = 0;
+    float _iouThresh = 0;
     AsyncLogger* _logger = nullptr;
     VideoStreamer* _streamer = nullptr;
     BufferConsumer* _consumer = nullptr;
@@ -64,13 +132,16 @@ private:
     int _frameType = 0;
 
     cv::Mat _cpuImg;
+    cv::Mat _cpuModelOutput;
     cv::cuda::GpuMat _gpuImg;
     cv::cuda::GpuMat _gpuPlanarImg;
-    cv::cuda::GpuMat _gpuModelInput;
-    cv::cuda::GpuMat _gpuModelOutput;
+    cv::cuda::GpuMat _gpuModelIn;
+    cv::cuda::GpuMat _gpuModelOut;
+    cv::cuda::GpuMat _gpuModelOutT;
     uchar* _gpuPlanarImgBuff = nullptr;
     uchar* _gpuModelInBuff = nullptr;
     uchar* _gpuModelOutBuff = nullptr;
+    uchar* _gpuModelOutTBuff = nullptr;
     float* _redPlane = nullptr;
     float* _greenPlane = nullptr;
     float* _bluePlane = nullptr;
@@ -91,31 +162,43 @@ private:
     uint64_t _inputRgbBuffLen = 0;
     uint64_t _outputLayerByteLen = 0;
     uint64_t _inputLayerByteLen = 0;
-    uint64_t _attribsSize = 0;
-    uint64_t _detectsSize = 0;
+    uint64_t _detectionInfoLen = 0;
+    uint64_t _predictionsLen = 0;
     uint64_t _numClasses = 0;
     std::string _inputTensorName;
     std::string _outputTensorName;
-    Npp8u* _intPlanes[YOLO11_NUM_CHANNELS];
-    Npp32f* _floatPlanes[YOLO11_NUM_CHANNELS];
-    Npp32f _consts[YOLO11_NUM_CHANNELS] = {255.0, 255.0, 255.0};
-    int _intSteps[YOLO11_NUM_CHANNELS];
+    Npp8u* _intPlanes[3];
+    Npp32f* _floatPlanes[3];
+    Npp32f _consts[3] = {255.0, 255.0, 255.0};
+    int _intSteps[3];
     NppiSize _nppRoi;
+    std::vector<std::string> _inputTensorNames;
+    std::vector<std::string> _outputTensorNames;
+    std::vector<uchar**> _buffs;
+    DetectionsData _detections;
     
+    void GetTensorNames(const nvinfer1::ICudaEngine& engine);
     std::string Onnx2Engine(std::filesystem::path& onnxFile);
     void DetectObjects();
     void RunInference(GstBuffer* buffer);
     bool LoadModel(std::string modelPath);
-    bool AllocateInputBuffer();
-    bool LoadImageInput();
+    bool TestInference();
+    bool RunInfernce();
+    inline bool LoadImageInput();
+    inline bool ProcessModelOutput();
     inline void UpdateFrameDims();
-    inline void CreateGpuImg(uchar* img);
     inline void CreateCpuImg();
     inline void WriteCpuImg();
     inline bool CheckImageDims(cv::cuda::GpuMat& img);
-    inline bool RunTestInference();
     inline bool AllocateCudaBuffer(uchar** buffer, std::size_t buffLen);
     inline bool DeallocateCudaBuffer(uchar** buffer);
+    inline void SetCandidate(int idx, DetectionData candidate);
+    inline void ResetFinalDetections();
+    inline void ResetDetectionCandidates();
+    inline void InitializeDetectionsData(int maxNumDetections);
+    inline void SortCandidates();
+    inline float CalculateIou(DetectionData& a, DetectionData&b);
+    inline bool NonMaxSuppression(int numCandidates);
 };
 
 #endif // OBJECTDETECTOR_H
