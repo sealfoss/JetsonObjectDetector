@@ -109,6 +109,8 @@ GstPadProbeReturn VideoStreamer::OnProbePad(
     const gchar *format;
     gint width, height, channels, depth, byteLen;
     event = GST_PAD_PROBE_INFO_EVENT(info);
+    (void)pad; // Mark pad as unused argument.
+
     if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) 
     {   
         width = height = channels = depth = byteLen = 0;
@@ -121,15 +123,18 @@ GstPadProbeReturn VideoStreamer::OnProbePad(
             {
                 channels = 3;
                 depth = 8;
-            } else if (g_strcmp0(format, VS_RGBA_FMT) == 0)
+            } 
+            else if (g_strcmp0(format, VS_RGBA_FMT) == 0)
             {
                 channels = 4;
                 depth = 8;
-            } else if (g_strcmp0(format, VS_NV12_FMT) == 0) 
+            } 
+            else if (g_strcmp0(format, VS_NV12_FMT) == 0) 
             {
                 channels = 3;
                 depth = 8;
-            } else if(g_strcmp0(format, VS_GRAY8_FMT) == 0)
+            } 
+            else if(g_strcmp0(format, VS_GRAY8_FMT) == 0)
             {
                 channels = 1;
                 depth = 8;
@@ -174,7 +179,6 @@ bool VideoStreamer::WasFrameInfoUpdated()
     return updated;
 }
 
-
 GstFlowReturn VideoStreamer::OnNewSample(GstAppSink *sink, gpointer gData)
 {
     GstFlowReturn flow = GST_FLOW_OK;
@@ -185,15 +189,15 @@ GstFlowReturn VideoStreamer::OnNewSample(GstAppSink *sink, gpointer gData)
     if(sample)
     {
         buffer = gst_sample_get_buffer(sample);
+
         if(buffer)
         {
             gst_buffer_ref(buffer);
+
             if(!streamer->_consumer->AddBuffer(buffer))
-            {
-                LogDebug("Failed to add buffer.");
                 gst_buffer_unref(buffer);
-            }
         }
+        
         gst_sample_unref(sample);
     }
 
@@ -208,6 +212,7 @@ gboolean VideoStreamer::BusCall(GstBus* bus, GstMessage* msg, gpointer data)
     GMainLoop *loop = (GMainLoop *)data;
     GstState old, current, pending;
     stringstream sstream;
+    (void)bus; // Mark bus argument unused.
 
     switch (GST_MESSAGE_TYPE(msg)) 
     {

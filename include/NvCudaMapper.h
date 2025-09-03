@@ -1,5 +1,5 @@
-#ifndef NVBUFFPROCESSOR_H
-#define NVBUFFPROCESSOR_H
+#ifndef NVCUDAMAPPER_H
+#define NVCUDAMAPPER_H
 
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda.hpp>
@@ -8,12 +8,11 @@
 class ObjectDetector;
 class NvBufSurface;
 
-class NvBufProcessor
+class NvCudaMapper
 {
 public:
-    NvBufProcessor();
-    ~NvBufProcessor();
-    void TestProcessRgbaCudaImg(cv::cuda::GpuMat& img);
+    NvCudaMapper();
+    ~NvCudaMapper();
     uchar* MapNvmmToCuda(GstBuffer *buffer);
     inline int GetWidth();
     inline int GetHeight();
@@ -32,4 +31,4 @@ private:
     int _byteLen = 0;
 };
 
-#endif // NVBUFFPROCESSOR_H
+#endif // NVCUDAMAPPER_H

@@ -1,51 +1,65 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
 #include <string>
+#include <sstream>
+#include <vector>
 #include "ObjectDetector.h"
 #include "Logger.h"
 
-/* 
-gst-launch-1.0 udpsrc port=5600 ! 
-application/x-rtp,media=video,clock-rate=90000,encoding-name=H265 ! 
-rtph265depay ! h265parse ! nvv4l2decoder ! nvvidconv ! 
-video/x-raw,width=1280,height=720 ! queue ! autovideosink
-*/
+
+#define DEFAULT_MODELPATH "/home/reed/repos/JetsonObjectDetector/models/yolo11m/yolo11m.engine"
 
 #define DRONE_PIPELEINE "udpsrc port=5600 ! \
 application/x-rtp,media=video,clock-rate=90000,encoding-name=H265 ! \
 rtph265depay ! h265parse ! nvv4l2decoder ! nvvidconv ! \
 video/x-raw,format=BGRx ! queue ! appsink"
 
-#define DEFAULT_PIPELINE "videotestsrc do-timestamp=true ! video/x-raw,format=RGBA ! nvvidconv ! video/x-raw(memory:NVMM) ! appsink name=sink"
+#define UDP_PIPELINE "udpsrc port=1337 ! \
+application/x-rtp,media=video,clock-rate=90000,encoding-name=H265 ! \
+rtph265depay ! h265parse ! nvv4l2decoder ! nvvidconv ! \
+video/x-raw(memory:NVMM),width=1280,height=704,format=RGBA ! \
+appsink name=sink"
+
+#define TEST_PIPELINE "videotestsrc do-timestamp=true ! \
+video/x-raw,format=RGBA ! nvvidconv ! video/x-raw(memory:NVMM) ! \
+appsink name=sink"
+
+#define DEFAULT_PIPELINE UDP_PIPELINE
+
 
 using namespace std;
 
-
 int main(int argc, char** argv) 
 {
-    int num = 0;
-    string filename;
+    gst_init(nullptr, nullptr);
+    ObjectDetector* detector = nullptr;
     string pipeline = argc > 1 ? argv[1] : DEFAULT_PIPELINE;
-    ObjectDetector* detector = new ObjectDetector();
+    string modelPath = argc > 2 ? argv[2] : DEFAULT_MODELPATH;
+    stringstream stream;
+    vector<Detection> detections;
+
+    detector = new ObjectDetector();
     detector->OpenVideoStream(pipeline);
-    detector->StartDetecting("/home/reed/repos/JetsonObjectDetector/models/yolo11m/yolo11m.engine");
-    
+    detector->StartDetecting(modelPath);
 
     while(detector->IsDetecting())
     {
-        if(detector->WasCpuImageUpdated())
+        detections = detector->GetLatestDetections();
+        if(detections.size() > 0)
         {
-            cv::Mat img = detector->GetCpuImage();
-            if(!img.empty())
+            for(Detection det : detections)
             {
-                filename = "ProcessedImage_" + to_string(num++ % 2) + ".png";
-                cv::imwrite(filename, img);
+                stream.str("");
+                stream << "Detected Object, class: " << det.classId
+                    << ", confidence: " << det.confidence << ", x: " 
+                    << det.bbox.x << ", y: " << det.bbox.y << ", width: " 
+                    << det.bbox.width << ", height: " << det.bbox.height;
+                LogDebug(stream.str());
             }
-            else
-                LogDebug("Empty image.");
         }
     }
 
+    LogDebug("Exiting, goodbye.");
     delete detector;
     return 0;
 }

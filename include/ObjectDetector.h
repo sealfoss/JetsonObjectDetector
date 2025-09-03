@@ -41,7 +41,7 @@
 
 
 class AsyncLogger;
-class NvBufProcessor;
+class NvCudaMapper;
 class BufferConsumer;
 class VideoStreamer;
 struct VideoFrameInfo;
@@ -81,8 +81,6 @@ public:
     bool StartDetecting(std::string modelPath);
     bool StopDetecting();
     bool IsDetecting();
-    bool WasCpuImageUpdated();
-    cv::Mat GetCpuImage();
     void Notify();
     std::vector<Detection> GetLatestDetections();
     
@@ -104,7 +102,7 @@ private:
     AsyncLogger* _logger = nullptr;
     VideoStreamer* _streamer = nullptr;
     BufferConsumer* _consumer = nullptr;
-    NvBufProcessor* _processor = nullptr;
+    NvCudaMapper* _processor = nullptr;
     std::shared_mutex _mutex;
     std::mutex _condMutex;
     std::shared_mutex _detectionsMutex;
@@ -181,7 +179,6 @@ private:
     inline bool ProcessModelOutput();
     inline void UpdateFrameDims();
     inline void CreateCpuImg();
-    inline void WriteCpuImg();
     inline bool CheckImageDims(cv::cuda::GpuMat& img);
     inline bool AllocateCudaBuffer(uchar** buffer, std::size_t buffLen);
     inline bool DeallocateCudaBuffer(uchar** buffer);

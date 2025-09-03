@@ -46,7 +46,6 @@ public:
             _buffers.push_back(buffer);
             _mutex.unlock();
             _owner->Notify();
-            LogDebug("Added buffer to consumer.");
             added = true;
 
             

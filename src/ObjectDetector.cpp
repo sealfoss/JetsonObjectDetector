@@ -1,6 +1,6 @@
 #include "ObjectDetector.h"
 #include "BufferConsumer.h"
-#include "NvBufProcessor.h"
+#include "NvCudaMapper.h"
 #include "VideoStreamer.h"
 #include "AsyncLogger.h"
 #include "FormatInput.cuh"
@@ -14,6 +14,8 @@
 #define OD_ONNX_EXT ".onnx"
 #define OD_ENG_EXT ".engine"
 #define OD_ENG_MEM 4ULL * 1024 * 1024 * 1024
+#define OD_VEC_CAP 1000
+
 
 using namespace std;
 using namespace cv;
@@ -21,15 +23,6 @@ using namespace nvinfer1;
 using namespace nvonnxparser;
 namespace fs = std::filesystem;
 
-inline float sigmoid(float x) 
-{
-    return 1.0f / (1.0f + std::exp(-x));
-}
-
-inline float clamp(float val, float minVal = 0.0f, float maxVal = 1.0f) 
-{
-    return std::max(minVal, std::min(maxVal, val));
-}
 
 ObjectDetector::ObjectDetector(
     float minConfidence, float iouThreshold, int maxDetections, int numChans, 
@@ -43,11 +36,10 @@ ObjectDetector::ObjectDetector(
 , _classOffset(classesOffset)
 , _testFilepath((fs::current_path() / fs::path(testFilepath)).string())
 , _logger(new AsyncLogger()), _consumer(new BufferConsumer(this))
-, _processor(new NvBufProcessor())
+, _processor(new NvCudaMapper())
 {
     _minConf = minConfidence;
     _iouThresh = iouThreshold;
-    gst_init(nullptr, nullptr);
 }
 
 ObjectDetector::~ObjectDetector()
@@ -99,9 +91,8 @@ bool ObjectDetector::StartDetecting(std::string modelPath)
     }
     catch(const std::exception& e)
     {
-        std::cerr << e.what() << '\n';
+        LogErr("Failed to start object detector, error: " + string(e.what()));
     }
-    
     
     return success;
 }
@@ -135,7 +126,6 @@ void ObjectDetector::DetectObjects()
 
         while(_consumer->HasBuffers())
         {
-            
             lock.unlock();
             buff = _consumer->GetLastBuffer();
             if(_streamer->WasFrameInfoUpdated())
@@ -145,29 +135,6 @@ void ObjectDetector::DetectObjects()
             lock.lock();
         }
     }
-}
-
-void ObjectDetector::UpdateFrameDims()
-{
-    VideoFrameInfo info = _streamer->GetFrameInfo();
-    _frameWidth = info.width;
-    _frameHeight = info.height;
-    _frameChannels = info.channels;
-    _frameByteLen = info.byteLen;
-    _frameType = CV_MAKETYPE(CV_8U,_frameChannels);
-    if(!_cpuImg.empty())
-        _cpuImg = Mat();
-    if(!_gpuImg.empty())
-        _gpuImg = cuda::GpuMat();
-}
-
-bool ObjectDetector::IsDetecting()
-{
-    bool detecting;
-    _mutex.lock_shared();
-    detecting = _detecting;
-    _mutex.unlock_shared();
-    return detecting;
 }
 
 void ObjectDetector::RunInference(GstBuffer* buffer)
@@ -214,7 +181,7 @@ string ObjectDetector::Onnx2Engine(fs::path& onnxFile)
     {
         builder = createInferBuilder(*_logger);
         if(builder)
-            network = builder->createNetworkV2(0); // 0 for explicit batch
+            network = builder->createNetworkV2(0);
         if(network)
             parser = createParser(*network, *_logger);
         if(parser)
@@ -287,6 +254,7 @@ void ObjectDetector::GetTensorNames(const ICudaEngine& engine)
     string tensorName;
     nvinfer1::TensorIOMode iomode;
     stringstream stream;
+
     stream << "Engine has " << engine.getNbIOTensors() 
         << " input/output tensors.";
     LogDebug(stream.str());
@@ -382,30 +350,20 @@ bool ObjectDetector::LoadModel(string modelPath)
         _outputTensorName = string(_engine->getIOTensorName(_outIdx));
         _shapeIn = _engine->getTensorShape(_inputTensorName.c_str());
         _shapeOut = _engine->getTensorShape(_outputTensorName.c_str());
-
         _modelInH = _shapeIn.d[_hIdx];
         _modelInW = _shapeIn.d[_wIdx];
         _planeSize = _modelInH * _modelInW;
         _inputRgbBuffLen = _planeSize * _numChans;
         _inputLayerByteLen = _inputRgbBuffLen * sizeof(float);
-
-
         _detectionInfoLen = _shapeOut.d[_detectionInfoLenIdx];
         _predictionsLen = _shapeOut.d[_proposalsLenIdx];
         _numClasses = _detectionInfoLen - _classOffset;
-
         _outputLayerSize = _detectionInfoLen * _predictionsLen;
-        
         _outputLayerByteLen = _outputLayerSize * sizeof(float);
         _intSteps[0] = _modelInW;
         _intSteps[1] = _modelInW;
         _intSteps[2] = _modelInW;
         _nppRoi = {(int)_modelInW, (int)_modelInH};
-        _detections = std::vector<Detection>(_predictionsLen);
-        _ids = std::vector<int>(_predictionsLen);
-        _idxs = std::vector<int>(_predictionsLen);
-        _scores = std::vector<float>(_predictionsLen);
-        _bboxes = std::vector<cv::Rect>(_predictionsLen);
         success = AllocateCudaBuffer(&_gpuPlanarImgBuff, _inputRgbBuffLen);
 
         if(success)
@@ -489,6 +447,7 @@ bool ObjectDetector::LoadImageInput()
         _gpuImg.data, _gpuImg.step, _intPlanes, _gpuImg.cols, _nppRoi
     ); 
     cudaStreamSynchronize(0);
+
     if(status == NPP_NO_ERROR)
     {
         
@@ -517,29 +476,23 @@ bool ObjectDetector::ProcessModelOutput()
     stringstream stream;
     cv::Mat objClass, prediction, scores;
     int i, classId;
-    float confidence, minConf, iou, x, y, w, h, halfW, halfH;
+    float confidence, x, y, w, h, halfW, halfH;
     float *predictionPtr, *firstElement, *lastElement, *maxElement;
-    Detection detection;
-    
-    iou = GetIouThreshold();
-    minConf = GetMinConfidence();
+    bool success = false;
+
     cuda::transpose(_gpuModelOut, _gpuModelOutT);
     _gpuModelOutT.download(_cpuModelOutput);
-    _bboxes.clear();
-    _scores.clear();
-    _ids.clear();
-    _idxs.clear();
 
     for(i = 0; i < _cpuModelOutput.rows; i++)
     {
-        
         prediction = _cpuModelOutput.row(i);
         predictionPtr = (float*)prediction.data;
         firstElement = ((float*)prediction.data) + 4;
         lastElement = firstElement + 80;
         maxElement = std::max_element(firstElement, lastElement);
         confidence = *maxElement;
-        if(confidence > minConf)
+        
+        if(confidence > _minConf)
         {
             classId = maxElement - firstElement;
             x = (*predictionPtr);
@@ -554,29 +507,42 @@ bool ObjectDetector::ProcessModelOutput()
         }
     }
 
-    dnn::NMSBoxes(_bboxes, _scores, minConf, iou, _idxs);
-    _detectionsMutex.lock();
-    _detections.clear();
-    for(int idx : _idxs)
+    if(_ids.size() > 0)
     {
-        _detections.push_back(
-            Detection {_ids[idx], _scores[idx], _bboxes[idx]}
-        );
+        dnn::NMSBoxes(_bboxes, _scores, _minConf, _iouThresh, _idxs);
+        success = _idxs.size() > 0;
+
+        if(success)
+        {
+            _detectionsMutex.lock();
+            for(int idx : _idxs)
+            {
+                _detections.push_back(
+                    Detection { _ids[idx], _scores[idx], _bboxes[idx] }
+                );
+            }
+            _detectionsMutex.unlock();
+        }
+
+        _ids = vector<int>();
+        _idxs = vector<int>();
+        _scores = vector<float>();
+        _bboxes = vector<Rect>();
     }
-    _detectionsMutex.unlock();
-    return _idxs.size() > 0;
+
+    return success;
 }
 
 vector<Detection> ObjectDetector::GetLatestDetections()
 {
-    vector<Detection> detections;
+    
     _detectionsMutex.lock();
-    for(Detection detection : _detections)
-        detections.push_back(detection);
+    vector<Detection> detections(_detections);
+    _detections.clear();
+    _detections = vector<Detection>();
     _detectionsMutex.unlock();
     return detections;
 }
-
 
 bool ObjectDetector::TestInference()
 {
@@ -597,6 +563,7 @@ bool ObjectDetector::TestInference()
     {
         _context->enqueueV3(_stream);
         cudaStreamSynchronize(_stream);
+
         if(ProcessModelOutput())
         {
             detections = GetLatestDetections();
@@ -611,7 +578,7 @@ bool ObjectDetector::TestInference()
     }
     else
         LogErr("Failed to load image into model.");
-    exit(1);
+
     return true;
 }
 
@@ -626,6 +593,7 @@ bool ObjectDetector::CheckImageDims(cuda::GpuMat& img)
 bool ObjectDetector::AllocateCudaBuffer(uchar** buffer, size_t buffLen)
 {
     bool success = cudaMalloc(buffer, buffLen) == cudaSuccess;
+
     if(success)
         _buffs.push_back(buffer);
     else
@@ -633,6 +601,7 @@ bool ObjectDetector::AllocateCudaBuffer(uchar** buffer, size_t buffLen)
         *buffer = nullptr;
         LogErr("CUDA allocation failed, size: " + to_string(buffLen));
     }
+
     return success;
 }
 
@@ -640,9 +609,9 @@ bool ObjectDetector::DeallocateCudaBuffer(uchar** buffer)
 {
     auto toRemove = _buffs.end();
     bool success = cudaFree(buffer) == cudaSuccess;
+
     if(success)
     {
-        
         for(auto itr = _buffs.begin(); itr != _buffs.end(); itr++)
             if(*itr == buffer)
                 toRemove = itr;
@@ -652,34 +621,8 @@ bool ObjectDetector::DeallocateCudaBuffer(uchar** buffer)
     }
     else
         LogErr("Failed to deallocation buffer.");
+
     return success;
-}
-
-void ObjectDetector::WriteCpuImg()
-{
-    _gpuImg.download(_cpuImg);
-    _cpuImgUpdated = true;
-}
-
-bool ObjectDetector::WasCpuImageUpdated()
-{
-    bool updated = false;
-    if(_mutex.try_lock_shared())
-    {
-        updated = _cpuImgUpdated;
-        _mutex.unlock_shared();
-    }
-    return updated;
-}
-
-Mat ObjectDetector::GetCpuImage()
-{
-    cv::Mat img;
-    _mutex.lock();
-    _cpuImg.copyTo(img);
-    _cpuImgUpdated = false;
-    _mutex.unlock();
-    return img;
 }
 
 float ObjectDetector::GetMinConfidence()
@@ -694,6 +637,7 @@ float ObjectDetector::GetMinConfidence()
 bool ObjectDetector::SetMinConfidence(float minConf)
 {
     bool success = _mutex.try_lock();
+
     if(success)
     {
         _minConf = minConf;
@@ -714,10 +658,36 @@ float ObjectDetector::GetIouThreshold()
 bool ObjectDetector::SetIouThreshold(float iouThresh)
 {
     bool success = _mutex.try_lock();
+
     if(success)
     {
         _iouThresh = iouThresh;
         _mutex.unlock();
     }
+
     return success;
 }
+
+void ObjectDetector::UpdateFrameDims()
+{
+    VideoFrameInfo info = _streamer->GetFrameInfo();
+    _frameWidth = info.width;
+    _frameHeight = info.height;
+    _frameChannels = info.channels;
+    _frameByteLen = info.byteLen;
+    _frameType = CV_MAKETYPE(CV_8U,_frameChannels);
+    if(!_cpuImg.empty())
+        _cpuImg = Mat();
+    if(!_gpuImg.empty())
+        _gpuImg = cuda::GpuMat();
+}
+
+bool ObjectDetector::IsDetecting()
+{
+    bool detecting;
+    _mutex.lock_shared();
+    detecting = _detecting;
+    _mutex.unlock_shared();
+    return detecting;
+}
+
