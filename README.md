@@ -1,4 +1,4 @@
-# Jetson Orin C++ OpenCV CUDA Project
+# Jetson Object Detector
 
 ## Overview
 This project is designed to leverage the capabilities of the Jetson Orin NX platform for image processing using OpenCV and CUDA. It provides a framework for loading, processing, and saving images efficiently.
