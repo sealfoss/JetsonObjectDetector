@@ -30,7 +30,7 @@ appsink name=sink"
 #define DEFAULT_PIPELINE UDP_PIPELINE
 #define DEFAULT_CONFIG_PATH "../DetectionConfig.json"
 
-
+using namespace cv;
 using namespace std;
 using namespace nlohmann;
 namespace fs = filesystem;
@@ -82,6 +82,7 @@ bool ReadConfigFile(const std::string filepath, DetectionConfig& config)
 
 int main(int argc, char** argv) 
 {
+    Mat detImg;
     vector<Detection> detections;
     DetectionConfig config;
     stringstream stream;
@@ -103,8 +104,11 @@ int main(int argc, char** argv)
         detections = detector->GetLatestDetections();
         if(detections.size() > 0)
         {
+            detector->GetDetectionImg(detImg);
+
             for(Detection det : detections)
             {
+                rectangle(detImg, det.bbox, Scalar(0,255,0), 2);
                 stream.str("");
                 stream << "Detected Object, class: " << det.classId
                     << ", confidence: " << det.confidence << ", x: " 
@@ -112,6 +116,9 @@ int main(int argc, char** argv)
                     << det.bbox.width << ", height: " << det.bbox.height;
                 LogDebug(stream.str());
             }
+            cvtColor(detImg, detImg, COLOR_RGB2BGR);
+            imwrite("Detections.jpg", detImg);
+            this_thread::sleep_for(chrono::milliseconds(5));
         }
         else
         {
@@ -120,6 +127,7 @@ int main(int argc, char** argv)
         }
     }
 
+    cv::destroyAllWindows();
     LogDebug("Exiting, goodbye.");
     delete detector;
     return 0;

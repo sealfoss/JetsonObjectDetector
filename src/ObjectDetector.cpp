@@ -36,7 +36,7 @@ ObjectDetector::ObjectDetector(
 , _proposalsLenIdx(proposalsLenIdx), _classOffset(classesOffset)
 , _testFilepath((fs::current_path() / fs::path(testFilepath)).string())
 , _logger(new AsyncLogger()), _consumer(new BufferConsumer(this))
-, _processor(new NvCudaMapper()), _writeCpuDebugImgs(writeCpuDebugImgs)
+, _processor(new NvCudaMapper()), _writeDetectionImg(writeCpuDebugImgs)
 {
     gst_init(nullptr, nullptr);
     _minConf = minConfidence;
@@ -481,7 +481,6 @@ bool ObjectDetector::LoadModel(string modelPath)
 bool ObjectDetector::LoadImageInput()
 {
     bool success = false;
-    //NppStatus status = nppiCopy_8u_C3P3R(
     int channels = _gpuImg.channels();
     NppStatus status = nppiCopy_8u_C4P4R(
         _gpuImg.data, _gpuImg.step, _intImgPlanes, _gpuImg.cols, _nppRoi
@@ -490,7 +489,8 @@ bool ObjectDetector::LoadImageInput()
 
     if(status == NPP_NO_ERROR)
     {
-        
+        if(_writeDetectionImg)
+            WriteDetectionImg();
         status = nppiConvert_8u32f_C3R(
             _gpuPlanarImg.data, _gpuPlanarImg.cols * _numModelChans, 
             (float*)_gpuModelInBuff, _gpuModelIn.step, _nppRoi
@@ -499,9 +499,6 @@ bool ObjectDetector::LoadImageInput()
 
         if(status == NPP_NO_ERROR)
         {
-            if(_writeCpuDebugImgs)
-                    WriteDebugImages();
-
             status = nppiDivC_32f_C3IR(
                 _normConsts, (float*)_gpuModelIn.data, 
                 _gpuModelIn.step, _nppRoi
@@ -523,27 +520,18 @@ bool ObjectDetector::LoadImageInput()
     return success;
 }
 
-void ObjectDetector::WriteDebugImages()
+void ObjectDetector::WriteDetectionImg()
 {
-    Mat cpuImg;
-    string filename;
-    int numImgs = 7;
-    cuda::GpuMat gpuImgs[] = {
-        cuda::GpuMat(_modelInSz, CV_8UC1, (uchar*)_intModelPlanes[0]),
-        cuda::GpuMat(_modelInSz, CV_8UC1, (uchar*)_intModelPlanes[1]),
-        cuda::GpuMat(_modelInSz, CV_8UC1, (uchar*)_intModelPlanes[2]),
-        cuda::GpuMat(_modelInSz, CV_32FC1, _redPlane),
-        cuda::GpuMat(_modelInSz, CV_32FC1, _greenPlane),
-        cuda::GpuMat(_modelInSz, CV_32FC1, _bluePlane),
-        cuda::GpuMat(_modelInSz, CV_32FC3, _gpuModelInBuff)
-    };
+    _imgOutMutex.lock();
+    _gpuImg.download(_cpuDetectionImg);
+    _imgOutMutex.unlock();
+}
 
-    for(int i = 0; i < numImgs; i++)
-    {
-        gpuImgs[i].download(cpuImg);
-        filename = "GpuDebugImage_" + to_string(i) + ".png";
-        imwrite(filename, cpuImg);
-    }
+void ObjectDetector::GetDetectionImg(Mat& outImg)
+{
+    _imgOutMutex.lock();
+    _cpuDetectionImg.copyTo(outImg);
+    _imgOutMutex.unlock();
 }
 
 bool ObjectDetector::ProcessModelOutput()

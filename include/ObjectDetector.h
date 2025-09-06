@@ -24,8 +24,8 @@
 #define YOLO11_CLASSES_OFFSET 4
 #define YOLO11_NUM_CHANNELS 3
 
-#define OD_DEFAULT_MIN_CONFIDENCE 0.6f
-#define OD_DEFAULT_IOU_THRESHOLD 0.45f
+#define OD_DEFAULT_MIN_CONFIDENCE 0.8f
+#define OD_DEFAULT_IOU_THRESHOLD 0.25f
 #define OD_DEFAULT_MAX_DET 1000
 #define OD_DEFAULT_NUM_IMG_CHANS 4
 #define OD_DEFAULT_NUM_MODEL_CHANS 3
@@ -39,7 +39,7 @@
 #define OD_DEFAULT_NUM_CHANNELS 3
 #define OD_INPUT_MAG 255.0
 #define OD_TEST_FILE "../models/Toothbrush.jpg"
-#define OD_WRITE_DEBUG_IMGS true
+#define OD_WRITE_DET_IMGS true
 #define OD_NORM_CONST 255.0f
 
 
@@ -74,9 +74,10 @@ public:
         int proposalsLenIdx=OD_DEFAULT_DET_PROPOSALS_LEN_IDX,
         int classesOffset=OD_DEFAULT_CLASSES_OFFSET,
         std::string testFilepath=OD_TEST_FILE,
-        bool writeCpuDebugImgs=OD_WRITE_DEBUG_IMGS
+        bool writeDetectionImgs=OD_WRITE_DET_IMGS
     );
     ~ObjectDetector();
+    void GetDetectionImg(cv::Mat& outImg);
     float GetMinConfidence();
     bool SetMinConfidence(float minConf);
     float GetIouThreshold();
@@ -112,9 +113,10 @@ private:
     std::shared_mutex _mutex;
     std::mutex _condMutex;
     std::shared_mutex _detectionsMutex;
+    std::shared_mutex _imgOutMutex;
     std::condition_variable _cv;
     std::thread _thread;
-    bool _writeCpuDebugImgs = false;
+    bool _writeDetectionImg = false;
     bool _cpuImgUpdated = false;
     bool _detecting = false;
     int _frameWidth = 0;
@@ -122,6 +124,7 @@ private:
     int _frameChannels = 0;
     int _frameByteLen = 0;
     int _frameType = 0;
+    cv::Mat _cpuDetectionImg;
     cv::Mat _cpuImg;
     cv::Mat _cpuModelOutput;
     cv::cuda::GpuMat _gpuImg;
@@ -195,7 +198,7 @@ private:
     inline bool CheckImageDims(cv::cuda::GpuMat& img);
     inline bool AllocateCudaBuffer(uchar** buffer, std::size_t buffLen);
     inline bool DeallocateCudaBuffer(uchar** buffer);
-    inline void WriteDebugImages();
+    inline void WriteDetectionImg();
 };
 
 #endif // OBJECTDETECTOR_H
