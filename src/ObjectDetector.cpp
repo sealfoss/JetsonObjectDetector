@@ -25,18 +25,18 @@ namespace fs = std::filesystem;
 
 
 ObjectDetector::ObjectDetector(
-    float minConfidence, float iouThreshold, int maxDetections, int numChans, 
-    int inTensorIdx, int outTensorIdx, int heightIdx, int widthIdx, 
-    int detectionInfoLenIdx, int proposalsLenIdx, int classesOffset, 
-    string testFilepath
+    float minConfidence, float iouThreshold, int maxDetections, 
+    int numImgChans, int numModelChans, int inTensorIdx, int outTensorIdx, 
+    int heightIdx, int widthIdx, int detectionInfoLenIdx, int proposalsLenIdx, 
+    int classesOffset, string testFilepath, bool writeCpuDebugImgs
 ) 
-: _maxDets(maxDetections), _numChans(numChans), _inIdx(inTensorIdx)
-, _outIdx(outTensorIdx), _hIdx(heightIdx), _wIdx(widthIdx)
-, _detectionInfoLenIdx(detectionInfoLenIdx), _proposalsLenIdx(proposalsLenIdx)
-, _classOffset(classesOffset)
+: _maxDets(maxDetections), _numImgChans(numImgChans)
+, _numModelChans(numModelChans), _inIdx(inTensorIdx), _outIdx(outTensorIdx)
+, _hIdx(heightIdx), _wIdx(widthIdx), _detectionInfoLenIdx(detectionInfoLenIdx)
+, _proposalsLenIdx(proposalsLenIdx), _classOffset(classesOffset)
 , _testFilepath((fs::current_path() / fs::path(testFilepath)).string())
 , _logger(new AsyncLogger()), _consumer(new BufferConsumer(this))
-, _processor(new NvCudaMapper())
+, _processor(new NvCudaMapper()), _writeCpuDebugImgs(writeCpuDebugImgs)
 {
     gst_init(nullptr, nullptr);
     _minConf = minConfidence;
@@ -53,6 +53,15 @@ ObjectDetector::~ObjectDetector()
     delete _processor;
     delete _logger;
     gst_deinit();
+
+    if(_intImgPlanes)
+        delete[] _intImgPlanes;
+    if(_intModelPlanes)
+        delete[] _intModelPlanes;
+    if(_floatPlanes)
+        delete[] _floatPlanes;
+    if(_normConsts)
+        delete _normConsts;
 }
 
 void ObjectDetector::Notify()
@@ -148,6 +157,8 @@ void ObjectDetector::RunInference(GstBuffer* buffer)
 
     if(GST_IS_BUFFER(buffer))
         img = _processor->MapNvmmToCuda(buffer);
+    else
+        LogErr("GstBuffer passed to RunInference is not valid.");
 
     if(img != nullptr)
     {
@@ -301,6 +312,7 @@ bool ObjectDetector::LoadModel(string modelPath)
     fs::path ext = modelFile.extension();
     string enginePath = "";
     string msg;
+    int i;
     bool success = false;
 
     if(ext.string() == OD_ONNX_EXT)
@@ -358,35 +370,54 @@ bool ObjectDetector::LoadModel(string modelPath)
         _modelInH = _shapeIn.d[_hIdx];
         _modelInW = _shapeIn.d[_wIdx];
         _planeSize = _modelInH * _modelInW;
-        _inputRgbBuffLen = _planeSize * _numChans;
-        _inputLayerByteLen = _inputRgbBuffLen * sizeof(float);
+        _inputRgbBuffLen = _planeSize * _numImgChans;
+        _inputLayerByteLen = _planeSize * _numModelChans * sizeof(float);
         _detectionInfoLen = _shapeOut.d[_detectionInfoLenIdx];
         _predictionsLen = _shapeOut.d[_proposalsLenIdx];
         _numClasses = _detectionInfoLen - _classOffset;
         _outputLayerSize = _detectionInfoLen * _predictionsLen;
         _outputLayerByteLen = _outputLayerSize * sizeof(float);
-        _intSteps[0] = _modelInW;
-        _intSteps[1] = _modelInW;
-        _intSteps[2] = _modelInW;
         _nppRoi = {(int)_modelInW, (int)_modelInH};
+        _modelInSz = Size2i(_modelInW, _modelInH);
         success = AllocateCudaBuffer(&_gpuPlanarImgBuff, _inputRgbBuffLen);
 
         if(success)
         {
+
             _gpuPlanarImg = cuda::GpuMat(
-                _modelInH, _modelInW, CV_MAKETYPE(CV_8U, _numChans), 
+                _modelInH, _modelInW, CV_MAKETYPE(CV_8U, _numImgChans), 
                 _gpuPlanarImgBuff
             );
-            _intPlanes[0] = _gpuPlanarImgBuff;
-            _intPlanes[1] = (_gpuPlanarImgBuff + _planeSize);
-            _intPlanes[2] = (_gpuPlanarImgBuff + (_planeSize * 2));
+            
             success = AllocateCudaBuffer(&_gpuModelInBuff, _inputLayerByteLen);
         }
 
         if(success)
         {
+            try
+            {
+                _intImgPlanes = new Npp8u*[_numImgChans];
+                _intModelPlanes = new Npp8u*[_numModelChans];
+                _floatPlanes = new Npp32f*[_numModelChans];
+                _normConsts =  new Npp32f[_numModelChans];
+                for(i = 0; i < _numImgChans; i++)
+                    _intImgPlanes[i] = _gpuPlanarImgBuff + (_planeSize * i);
+                for(i = 0; i < _numModelChans; i++)
+                {
+                     _intModelPlanes[i] = _intImgPlanes[i];
+                     _normConsts[i] = OD_NORM_CONST;
+                }
+            }
+            catch(const std::exception& e)
+            {
+                success = false;
+            }
+        }
+
+        if(success)
+        {
             _gpuModelIn = cuda::GpuMat(
-                _modelInH, _modelInW, CV_MAKETYPE(CV_32F, _numChans), 
+                _modelInH, _modelInW, CV_MAKETYPE(CV_32F, 3), 
                 _gpuModelInBuff
             );
             _redPlane = (float*)_gpuModelInBuff;
@@ -426,6 +457,8 @@ bool ObjectDetector::LoadModel(string modelPath)
                 Mat(_predictionsLen, _detectionInfoLen, CV_32FC1);
         }
 
+        
+
         if(success && TestInference())
         {
             msg = "Model loaded from Tensor RT .engine file successfully.";
@@ -448,8 +481,10 @@ bool ObjectDetector::LoadModel(string modelPath)
 bool ObjectDetector::LoadImageInput()
 {
     bool success = false;
-    NppStatus status = nppiCopy_8u_C3P3R(
-        _gpuImg.data, _gpuImg.step, _intPlanes, _gpuImg.cols, _nppRoi
+    //NppStatus status = nppiCopy_8u_C3P3R(
+    int channels = _gpuImg.channels();
+    NppStatus status = nppiCopy_8u_C4P4R(
+        _gpuImg.data, _gpuImg.step, _intImgPlanes, _gpuImg.cols, _nppRoi
     ); 
     cudaStreamSynchronize(0);
 
@@ -457,23 +492,58 @@ bool ObjectDetector::LoadImageInput()
     {
         
         status = nppiConvert_8u32f_C3R(
-            _gpuPlanarImg.data, _gpuPlanarImg.step, (float*)_gpuModelInBuff, 
-            _gpuModelIn.step, _nppRoi
+            _gpuPlanarImg.data, _gpuPlanarImg.cols * _numModelChans, 
+            (float*)_gpuModelInBuff, _gpuModelIn.step, _nppRoi
         );
         cudaStreamSynchronize(0);
-        
+
         if(status == NPP_NO_ERROR)
         {
+            if(_writeCpuDebugImgs)
+                    WriteDebugImages();
+
             status = nppiDivC_32f_C3IR(
-                _consts, (float*)_gpuModelIn.data, 
+                _normConsts, (float*)_gpuModelIn.data, 
                 _gpuModelIn.step, _nppRoi
             );
+
             cudaStreamSynchronize(0);
-            success = status == NPP_NO_ERROR;
+            
+            if(status == NPP_NO_ERROR)
+                success = true;
+            else
+                LogErr("Failed to normalize float value input.");
         }
+        else
+            LogErr("Failed convert split RGB channels to float values.");
     }
+    else
+        LogErr("Failed to split RGB channels. Num: " + to_string(channels));
 
     return success;
+}
+
+void ObjectDetector::WriteDebugImages()
+{
+    Mat cpuImg;
+    string filename;
+    int numImgs = 7;
+    cuda::GpuMat gpuImgs[] = {
+        cuda::GpuMat(_modelInSz, CV_8UC1, (uchar*)_intModelPlanes[0]),
+        cuda::GpuMat(_modelInSz, CV_8UC1, (uchar*)_intModelPlanes[1]),
+        cuda::GpuMat(_modelInSz, CV_8UC1, (uchar*)_intModelPlanes[2]),
+        cuda::GpuMat(_modelInSz, CV_32FC1, _redPlane),
+        cuda::GpuMat(_modelInSz, CV_32FC1, _greenPlane),
+        cuda::GpuMat(_modelInSz, CV_32FC1, _bluePlane),
+        cuda::GpuMat(_modelInSz, CV_32FC3, _gpuModelInBuff)
+    };
+
+    for(int i = 0; i < numImgs; i++)
+    {
+        gpuImgs[i].download(cpuImg);
+        filename = "GpuDebugImage_" + to_string(i) + ".png";
+        imwrite(filename, cpuImg);
+    }
 }
 
 bool ObjectDetector::ProcessModelOutput()

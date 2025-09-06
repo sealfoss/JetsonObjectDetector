@@ -22,7 +22,7 @@ enum LogLevel
     LOG_ERROR = 4
 };
 
-#define DEFAULT_MIN_LOG_LEVEL LOG_INFO
+#define DEFAULT_MIN_LOG_LEVEL LOG_DEBUG
 #define DEFAULT_PRINT_TO_CONSOLE true
 
 class Logger : public nvinfer1::ILogger 

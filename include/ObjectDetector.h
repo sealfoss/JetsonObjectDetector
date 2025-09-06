@@ -27,7 +27,8 @@
 #define OD_DEFAULT_MIN_CONFIDENCE 0.6f
 #define OD_DEFAULT_IOU_THRESHOLD 0.45f
 #define OD_DEFAULT_MAX_DET 1000
-#define OD_DEFAULT_NUM_CHANS 3
+#define OD_DEFAULT_NUM_IMG_CHANS 4
+#define OD_DEFAULT_NUM_MODEL_CHANS 3
 #define OD_DEFAULT_IN_IDX 0
 #define OD_DEFAULT_OUT_IDX 1
 #define OD_DEFAULT_H_IDX 2
@@ -38,6 +39,8 @@
 #define OD_DEFAULT_NUM_CHANNELS 3
 #define OD_INPUT_MAG 255.0
 #define OD_TEST_FILE "../models/Toothbrush.jpg"
+#define OD_WRITE_DEBUG_IMGS true
+#define OD_NORM_CONST 255.0f
 
 
 class AsyncLogger;
@@ -61,7 +64,8 @@ public:
         float minConfidence=OD_DEFAULT_MIN_CONFIDENCE,
         float iouThreshold=OD_DEFAULT_IOU_THRESHOLD,
         int maxDetections=OD_DEFAULT_MAX_DET,
-        int numChans=OD_DEFAULT_NUM_CHANS,
+        int numImageChannels=OD_DEFAULT_NUM_IMG_CHANS,
+        int numModelInputChannels=OD_DEFAULT_NUM_MODEL_CHANS,
         int inTensoridx=OD_DEFAULT_IN_IDX,
         int outTensoridx=OD_DEFAULT_OUT_IDX,
         int heightIdx=OD_DEFAULT_H_IDX,
@@ -69,7 +73,8 @@ public:
         int detectionInfoLenIdx=OD_DEFAULT_DET_INFO_LEN_IDX,
         int proposalsLenIdx=OD_DEFAULT_DET_PROPOSALS_LEN_IDX,
         int classesOffset=OD_DEFAULT_CLASSES_OFFSET,
-        std::string testFilepath=OD_TEST_FILE
+        std::string testFilepath=OD_TEST_FILE,
+        bool writeCpuDebugImgs=OD_WRITE_DEBUG_IMGS
     );
     ~ObjectDetector();
     float GetMinConfidence();
@@ -88,7 +93,8 @@ public:
 
 private:
     const int _maxDets;
-    const int _numChans;
+    const int _numImgChans;
+    const int _numModelChans;
     const int _inIdx;
     const int _outIdx;
     const int _hIdx;
@@ -108,6 +114,7 @@ private:
     std::shared_mutex _detectionsMutex;
     std::condition_variable _cv;
     std::thread _thread;
+    bool _writeCpuDebugImgs = false;
     bool _cpuImgUpdated = false;
     bool _detecting = false;
     int _frameWidth = 0;
@@ -115,7 +122,6 @@ private:
     int _frameChannels = 0;
     int _frameByteLen = 0;
     int _frameType = 0;
-
     cv::Mat _cpuImg;
     cv::Mat _cpuModelOutput;
     cv::cuda::GpuMat _gpuImg;
@@ -123,6 +129,7 @@ private:
     cv::cuda::GpuMat _gpuModelIn;
     cv::cuda::GpuMat _gpuModelOut;
     cv::cuda::GpuMat _gpuModelOutT;
+    cv::Size2i _modelInSz;
     uchar* _gpuPlanarImgBuff = nullptr;
     uchar* _gpuModelInBuff = nullptr;
     uchar* _gpuModelOutBuff = nullptr;
@@ -152,10 +159,16 @@ private:
     uint64_t _numClasses = 0;
     std::string _inputTensorName;
     std::string _outputTensorName;
-    Npp8u* _intPlanes[3];
-    Npp32f* _floatPlanes[3];
-    Npp32f _consts[3] = {255.0, 255.0, 255.0};
-    int _intSteps[3];
+
+    //Npp8u* _intImgPlanes[3];
+    //Npp8u* _intModelPlanes[4];
+    //Npp32f* _floatPlanes[3];
+    //Npp32f _consts[3] = {255.0, 255.0, 255.0};
+    //int _intSteps[3];
+    Npp8u** _intImgPlanes = nullptr;
+    Npp8u** _intModelPlanes = nullptr;
+    Npp32f** _floatPlanes = nullptr;
+    Npp32f* _normConsts = nullptr;
     NppiSize _nppRoi;
     std::vector<std::string> _inputTensorNames;
     std::vector<std::string> _outputTensorNames;
@@ -182,6 +195,7 @@ private:
     inline bool CheckImageDims(cv::cuda::GpuMat& img);
     inline bool AllocateCudaBuffer(uchar** buffer, std::size_t buffLen);
     inline bool DeallocateCudaBuffer(uchar** buffer);
+    inline void WriteDebugImages();
 };
 
 #endif // OBJECTDETECTOR_H

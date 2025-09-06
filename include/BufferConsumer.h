@@ -47,8 +47,6 @@ public:
             _mutex.unlock();
             _owner->Notify();
             added = true;
-
-            
         }
         return added;
     }

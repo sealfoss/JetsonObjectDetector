@@ -42,12 +42,16 @@ void VideoStreamer::ConsumeStreamVideo()
     {
         if(BuildPipeline())
         {
+            LogDebug("Starting video stream...");
             gst_element_set_state(_pipeline, GST_STATE_PLAYING);
             SetCapturing(true);
             g_main_loop_run(_loop);
+            LogDebug("Video stream ended.");
             SetCapturing(false);
             gst_element_set_state(_pipeline, GST_STATE_NULL);
         }
+        else
+            LogErr("Failed to build video stream pipeline.");   
     }
     catch(const std::exception& e)
     {

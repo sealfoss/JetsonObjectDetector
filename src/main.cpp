@@ -72,7 +72,7 @@ bool ReadConfigFile(const std::string filepath, DetectionConfig& config)
     {
         sstream.str("");
         sstream << "Failed to read detection config from file at path \"" 
-        << filepath << "\". Error:\n" << string(e.what());
+            << filepath << "\". Error:\n" << string(e.what());
         config.error = sstream.str();
     }
 
@@ -112,6 +112,11 @@ int main(int argc, char** argv)
                     << det.bbox.width << ", height: " << det.bbox.height;
                 LogDebug(stream.str());
             }
+        }
+        else
+        {
+            this_thread::sleep_for(chrono::milliseconds(5));
+            LogInfo("No detections made...");
         }
     }
 
