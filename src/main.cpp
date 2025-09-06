@@ -1,10 +1,13 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
 #include <string>
-#include <sstream>
 #include <vector>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
 #include "ObjectDetector.h"
 #include "Logger.h"
+#include "nlohmann/json.hpp"
 
 
 #define DEFAULT_MODELPATH "/home/reed/repos/JetsonObjectDetector/models/yolo11m/yolo11m.engine"
@@ -25,22 +28,75 @@ video/x-raw,format=RGBA ! nvvidconv ! video/x-raw(memory:NVMM) ! \
 appsink name=sink"
 
 #define DEFAULT_PIPELINE UDP_PIPELINE
+#define DEFAULT_CONFIG_PATH "../DetectionConfig.json"
 
 
 using namespace std;
+using namespace nlohmann;
+namespace fs = filesystem;
+
+struct DetectionConfig
+{
+    string pipeline;
+    string modelPath;
+    string error;
+
+    NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE (
+        DetectionConfig, pipeline, modelPath
+    )
+};
+
+bool ReadConfigFile(const std::string filepath, DetectionConfig& config)
+{
+    ifstream file;
+    string fileText;
+    stringstream sstream;
+    json configJson;
+    bool success = false;
+
+    try
+    {
+        file = ifstream(filepath);
+        if(file.is_open())
+        {
+            sstream << file.rdbuf();
+            file.close();
+            fileText = sstream.str();
+            configJson = json::parse(fileText);
+            config.from_json(configJson, config);
+            success = 
+                config.modelPath.size() > 0 && config.pipeline.size() > 0;
+        }
+    }
+    catch(const std::exception& e)
+    {
+        sstream.str("");
+        sstream << "Failed to read detection config from file at path \"" 
+        << filepath << "\". Error:\n" << string(e.what());
+        config.error = sstream.str();
+    }
+
+    return success;
+}
+
 
 int main(int argc, char** argv) 
 {
-    gst_init(nullptr, nullptr);
-    ObjectDetector* detector = nullptr;
-    string pipeline = argc > 1 ? argv[1] : DEFAULT_PIPELINE;
-    string modelPath = argc > 2 ? argv[2] : DEFAULT_MODELPATH;
-    stringstream stream;
     vector<Detection> detections;
+    DetectionConfig config;
+    stringstream stream;
+    string configPath = argc > 1 ? argv[1] : DEFAULT_CONFIG_PATH;
+    ObjectDetector* detector = new ObjectDetector();
 
-    detector = new ObjectDetector();
-    detector->OpenVideoStream(pipeline);
-    detector->StartDetecting(modelPath);
+    if(!ReadConfigFile(configPath, config))
+    {
+        LogErr(config.error);
+        config.modelPath = DEFAULT_MODELPATH;
+        config.pipeline = DEFAULT_PIPELINE;
+    }
+
+    if(detector->StartDetecting(config.modelPath))
+        detector->OpenVideoStream(config.pipeline);
 
     while(detector->IsDetecting())
     {

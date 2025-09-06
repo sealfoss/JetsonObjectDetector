@@ -38,6 +38,7 @@ ObjectDetector::ObjectDetector(
 , _logger(new AsyncLogger()), _consumer(new BufferConsumer(this))
 , _processor(new NvCudaMapper())
 {
+    gst_init(nullptr, nullptr);
     _minConf = minConfidence;
     _iouThresh = iouThreshold;
 }
@@ -62,7 +63,8 @@ void ObjectDetector::Notify()
 void ObjectDetector::OpenVideoStream(string pipelineDescription)
 {
     CloseVideoStream();
-    _streamer = new VideoStreamer(pipelineDescription, _consumer);
+    LogDebug("Opening video stream with pipeline: " + pipelineDescription);
+    _streamer = new VideoStreamer(pipelineDescription, _consumer, true);
 }
 
 void ObjectDetector::CloseVideoStream()
@@ -77,6 +79,8 @@ void ObjectDetector::CloseVideoStream()
 bool ObjectDetector::StartDetecting(std::string modelPath)
 {
     bool success = false;
+    LogDebug("Loading detection model from filepath: " + modelPath);
+
     try
     {
         if(LoadModel(modelPath))
@@ -85,7 +89,8 @@ bool ObjectDetector::StartDetecting(std::string modelPath)
             _detecting = true;
             _mutex.unlock();
             _thread = thread(&ObjectDetector::DetectObjects, this);
-            _streamer->Start();
+            if(_streamer)
+                _streamer->Start();
             success = true;
         }
     }
