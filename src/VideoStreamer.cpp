@@ -10,17 +10,6 @@
 using namespace std;    
 using namespace cv;
 
-#define VS_WIDTH_KEY "width"
-#define VS_HEIGHT_KEY "height"
-#define VS_FMT_KEY "format"
-#define VS_RGB_FMT "RGB"
-#define VS_RGBA_FMT "RGBA"
-#define VS_NV12_FMT "NV12"
-#define VS_GRAY8_FMT "GRAY8"
-#define VS_SINK_NAME "sink"
-#define VS_EMIT_NAME "emit-signals"
-#define VS_NEWSAMPLE_NAME "new-sample"
-#define VS_CHECK_DIMS (GstPadProbeType)(GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM)
 
 VideoStreamer::VideoStreamer(
     string pipelineDescription, BufferConsumer* consumer, bool autoStart
@@ -32,26 +21,21 @@ VideoStreamer::VideoStreamer(
 
 VideoStreamer::~VideoStreamer()
 {
-    if(IsCapturing())
+    if(IsStreaming())
         Stop();
 }
 
-void VideoStreamer::ConsumeStreamVideo()
+void VideoStreamer::ManageStream()
 {
     try
     {
-        if(BuildPipeline())
-        {
-            LogDebug("Starting video stream...");
-            gst_element_set_state(_pipeline, GST_STATE_PLAYING);
-            SetCapturing(true);
-            g_main_loop_run(_loop);
-            LogDebug("Video stream ended.");
-            SetCapturing(false);
-            gst_element_set_state(_pipeline, GST_STATE_NULL);
-        }
-        else
-            LogErr("Failed to build video stream pipeline.");   
+        LogDebug("Starting video stream...");
+        gst_element_set_state(_pipeline, GST_STATE_PLAYING);
+        g_main_loop_run(_loop);
+        LogDebug("Video stream ended.");
+        SetStreamingFlag(false);
+        gst_element_set_state(_pipeline, GST_STATE_NULL);
+    
     }
     catch(const std::exception& e)
     {
@@ -274,13 +258,14 @@ GstState VideoStreamer::GetCurrentState()
 bool VideoStreamer::Start()
 {
     bool success = false;
-    
+    LogDebug("Starting video stream with pipeline: " + _description);
     if(BuildPipeline())
     {
         LockStream(true);
-        if (!_capturing)
+        if (!_streaming)
         {
-            _thread = std::thread(&VideoStreamer::ConsumeStreamVideo, this);
+            _streaming = true;
+            _thread = std::thread(&VideoStreamer::ManageStream, this);
             success = true;
         }
         UnlockStream(true);
@@ -292,6 +277,7 @@ bool VideoStreamer::Stop()
 {
     bool success = false;
     GstEvent *eos_event = nullptr;
+    LogDebug("Stopping video stream...");
     eos_event = gst_event_new_eos();
     gst_element_send_event(_pipeline, eos_event);
     if (_thread.joinable())
@@ -300,21 +286,21 @@ bool VideoStreamer::Stop()
     return success;
 }
 
-bool VideoStreamer::IsCapturing()
+bool VideoStreamer::IsStreaming()
 {
     bool capturing;
     LockStream();
-    capturing = _capturing;
+    capturing = _streaming;
     UnlockStream();
     return capturing;
 }
 
-bool VideoStreamer::SetCapturing(bool capturing)
+bool VideoStreamer::SetStreamingFlag(bool capturing)
 {
     bool wasCapturing;
     LockStream(true);
-    wasCapturing = _capturing;
-    _capturing = capturing;
+    wasCapturing = _streaming;
+    _streaming = capturing;
     UnlockStream(true);
     return wasCapturing;
 }

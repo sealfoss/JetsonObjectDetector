@@ -6,6 +6,7 @@
 #include <sstream>
 #include <filesystem>
 #include "ObjectDetector.h"
+#include "OutStreamer.h"
 #include "Logger.h"
 #include "nlohmann/json.hpp"
 
@@ -82,12 +83,13 @@ bool ReadConfigFile(const std::string filepath, DetectionConfig& config)
 
 int main(int argc, char** argv) 
 {
-    Mat detImg;
+    Mat detImg, lastImg;
     vector<Detection> detections;
     DetectionConfig config;
     stringstream stream;
     string configPath = argc > 1 ? argv[1] : DEFAULT_CONFIG_PATH;
     ObjectDetector* detector = new ObjectDetector();
+    OutStreamer* outStream = nullptr;
 
     if(!ReadConfigFile(configPath, config))
     {
@@ -102,10 +104,9 @@ int main(int argc, char** argv)
     while(detector->IsDetecting())
     {
         detections = detector->GetLatestDetections();
+        detector->GetDetectionImg(detImg);
         if(detections.size() > 0)
         {
-            detector->GetDetectionImg(detImg);
-
             for(Detection det : detections)
             {
                 rectangle(detImg, det.bbox, Scalar(0,255,0), 2);
@@ -116,15 +117,30 @@ int main(int argc, char** argv)
                     << det.bbox.width << ", height: " << det.bbox.height;
                 LogDebug(stream.str());
             }
+
             cvtColor(detImg, detImg, COLOR_RGB2BGR);
-            imwrite("Detections.jpg", detImg);
-            this_thread::sleep_for(chrono::milliseconds(5));
         }
         else
         {
-            this_thread::sleep_for(chrono::milliseconds(5));
             LogInfo("No detections made...");
         }
+        
+        if(!detImg.empty())
+        {
+            if(outStream == nullptr)
+            {
+                outStream = new OutStreamer(
+                    detImg.cols, detImg.rows, 30, 5, "RGBA"
+                );
+                outStream->WriteNextBuffer(detImg);
+                outStream->Start();
+            }
+            
+            outStream->WriteNextBuffer(detImg);
+            detImg.copyTo(lastImg);
+        }
+        else if(!lastImg.empty())
+            outStream->WriteNextBuffer(lastImg);
     }
 
     cv::destroyAllWindows();

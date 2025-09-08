@@ -6,8 +6,8 @@ export_img_size = (704, 1280) # Width and height need to be multples of 32
 export_device = 0 #"dla:0" is another option, but good luck getting it to work.
 export_batch = 1
 export_workspace = None
-export_format = "engine"
-export_int8 = True
+export_format = "onnx" #"engine"
+export_int8 = False
 export_nms = False
 export_simplify = True
 export_dynamic = False
@@ -19,6 +19,7 @@ default_lenna_path = os.path.join(default_models_dir, "Lenna.png")
 def Detect(model_filepath: str, image_filepath: str=default_lenna_path):
     success = False
     print(f"Attempting inference run of .engine file at path: {model_filepath}")
+    
     try:
         if os.path.isfile(model_filepath):
             model = YOLO(model_filepath, task="detect")
@@ -43,7 +44,8 @@ export_args: dict={
     "dynamic": export_dynamic
 }
 
-def ExportEngine(pt_filepath: str, engine_filepath: str, coco_filepath: str=default_coco_path):
+def ExportEngine(
+    pt_filepath: str, engine_filepath: str, coco_filepath: str=default_coco_path):
     success = False
     print(f"Attempting export of .engine model file from .pt model file at path: {pt_filepath}")
     print(f"Export arguments:\n{str(export_args)}\n")
@@ -68,7 +70,7 @@ def ExportEngine(pt_filepath: str, engine_filepath: str, coco_filepath: str=defa
     return success
 
 if __name__ == "__main__":
-    model_path: str = ".models/yolo11m.pt"
+    model_path: str = "models/yolo11l-seg.pt"
     models_dir: str = ""
     model_paths: dict = {}
     argc = len(sys.argv)
@@ -122,5 +124,6 @@ if __name__ == "__main__":
             else:
                 print(f"Halting, engine validation failed, suggest removing erroneous file: {engine_filepath}")
                 break
+            
 print("Exiting, goodbye.")
 exit(0)

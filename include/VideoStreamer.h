@@ -10,6 +10,20 @@
 #include <shared_mutex>
 #include <thread>
 
+#define VS_MAX_BUFFS 10
+#define VS_WIDTH_KEY "width"
+#define VS_HEIGHT_KEY "height"
+#define VS_FMT_KEY "format"
+#define VS_RGB_FMT "RGB"
+#define VS_RGBA_FMT "RGBA"
+#define VS_NV12_FMT "NV12"
+#define VS_GRAY8_FMT "GRAY8"
+#define VS_SRC_NAME "source"
+#define VS_SINK_NAME "sink"
+#define VS_EMIT_NAME "emit-signals"
+#define VS_NEWSAMPLE_NAME "new-sample"
+#define VS_CHECK_DIMS (GstPadProbeType)(GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM)
+
 struct VideoFrameInfo
 {
     int width=0;
@@ -33,9 +47,9 @@ public:
     bool Stop();
     bool IsFrameAvailable();
     void OnFrameAvailable();
-    bool IsCapturing();
-    bool SetCapturing(bool capturing);
-    void ConsumeStreamVideo();
+    bool IsStreaming();
+    bool SetStreamingFlag(bool capturing);
+    virtual void ManageStream();
     void RecordCurrentState(GstState state);
     GstState GetCurrentState();
     void SetFrameInfo(
@@ -49,7 +63,7 @@ public:
         GstPad *pad, GstPadProbeInfo *info, gpointer gData
     );
 
-private:
+protected:
     std::string _description = "";
     BufferConsumer* _consumer = nullptr;
     GMainLoop* _loop = nullptr;
@@ -57,7 +71,7 @@ private:
     GstElement* _source = nullptr;
     GstElement* _sink = nullptr;
     GstState _current = GST_STATE_NULL;
-    bool _capturing = false;
+    bool _streaming = false;
     bool _available = false;
     std::shared_mutex _streamMutex;
     std::shared_mutex _frameMutex;
@@ -66,8 +80,7 @@ private:
     cv::cuda::GpuMat _gpuFrame;
     VideoFrameInfo _frameInfo;
     bool _frameInfoUpdated = false;
-    
-    GstBus* CreateBus();
+
     virtual bool BuildPipeline();
 
     static GstFlowReturn TransformMem (

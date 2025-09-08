@@ -5,6 +5,8 @@
 #include "AsyncLogger.h"
 #include "FormatInput.cuh"
 #include "NvOnnxParser.h"
+#include "OutStreamer.h"
+
 #include <fstream>
 #include <opencv2/cudaarithm.hpp>
 #include <sstream>
@@ -23,6 +25,38 @@ using namespace nvinfer1;
 using namespace nvonnxparser;
 namespace fs = std::filesystem;
 
+/*static bool Contains(
+    const std::string& str, const std::string& substr
+) 
+{
+    return str.find(substr) != std::string::npos;
+}
+
+static bool DirExists(const std::string& path) 
+{
+    return fs::exists(path) && fs::is_directory(path);
+}
+
+static bool FileExists(const std::string& path) 
+{
+    return fs::exists(path) && fs::is_regular_file(path);
+}
+
+static bool CreateDir(const std::string& path) {
+    bool success = DirExists(path);
+    if(!success) 
+    {
+        try 
+        {
+            success = fs::create_directories(path);
+        }
+        catch(const exception& e) 
+        {
+            LogErr("Failed to create directory, error: " + string(e.what()));
+        }
+    }
+    return success;
+}*/
 
 ObjectDetector::ObjectDetector(
     float minConfidence, float iouThreshold, int maxDetections, 
@@ -41,6 +75,8 @@ ObjectDetector::ObjectDetector(
     gst_init(nullptr, nullptr);
     _minConf = minConfidence;
     _iouThresh = iouThreshold;
+    OutStreamer* outstreamer = new OutStreamer();
+    delete outstreamer;
 }
 
 ObjectDetector::~ObjectDetector()
@@ -72,16 +108,15 @@ void ObjectDetector::Notify()
 void ObjectDetector::OpenVideoStream(string pipelineDescription)
 {
     CloseVideoStream();
-    LogDebug("Opening video stream with pipeline: " + pipelineDescription);
-    _streamer = new VideoStreamer(pipelineDescription, _consumer, true);
+    _inStream = new VideoStreamer(pipelineDescription, _consumer, true);
 }
 
 void ObjectDetector::CloseVideoStream()
 {
-    if(_streamer)
+    if(_inStream)
     {
-        delete _streamer;
-        _streamer = nullptr;
+        delete _inStream;
+        _inStream = nullptr;
     }
 }
 
@@ -98,8 +133,8 @@ bool ObjectDetector::StartDetecting(std::string modelPath)
             _detecting = true;
             _mutex.unlock();
             _thread = thread(&ObjectDetector::DetectObjects, this);
-            if(_streamer)
-                _streamer->Start();
+            if(_inStream)
+                _inStream->Start();
             success = true;
         }
     }
@@ -142,7 +177,7 @@ void ObjectDetector::DetectObjects()
         {
             lock.unlock();
             buff = _consumer->GetLastBuffer();
-            if(_streamer->WasFrameInfoUpdated())
+            if(_inStream->WasFrameInfoUpdated())
                 UpdateFrameDims();
             if(buff != nullptr)
                 RunInference(buff);
@@ -165,6 +200,10 @@ void ObjectDetector::RunInference(GstBuffer* buffer)
         _mutex.lock();
         _gpuImg = cuda::GpuMat(_frameHeight, _frameWidth, _frameType, img);
         LoadImageInput();
+        if(_writeDetectionImg)
+            WriteDetectionImg();
+        if(!_gpuImg.empty())
+            LogTrace("Gpu img chans: " + to_string(_gpuImg.channels()));
         _processor->Unmap();
         _consumer->UnrefLastBuffer();
         _context->enqueueV3(_stream);
@@ -489,8 +528,6 @@ bool ObjectDetector::LoadImageInput()
 
     if(status == NPP_NO_ERROR)
     {
-        if(_writeDetectionImg)
-            WriteDetectionImg();
         status = nppiConvert_8u32f_C3R(
             _gpuPlanarImg.data, _gpuPlanarImg.cols * _numModelChans, 
             (float*)_gpuModelInBuff, _gpuModelIn.step, _nppRoi
@@ -733,7 +770,7 @@ bool ObjectDetector::SetIouThreshold(float iouThresh)
 
 void ObjectDetector::UpdateFrameDims()
 {
-    VideoFrameInfo info = _streamer->GetFrameInfo();
+    VideoFrameInfo info = _inStream->GetFrameInfo();
     _frameWidth = info.width;
     _frameHeight = info.height;
     _frameChannels = info.channels;

@@ -47,6 +47,7 @@ class AsyncLogger;
 class NvCudaMapper;
 class BufferConsumer;
 class VideoStreamer;
+class OutStreamer;
 struct VideoFrameInfo;
 
 struct Detection
@@ -107,7 +108,8 @@ private:
     float _minConf = 0;
     float _iouThresh = 0;
     AsyncLogger* _logger = nullptr;
-    VideoStreamer* _streamer = nullptr;
+    VideoStreamer* _inStream = nullptr;
+    OutStreamer* _outStream = nullptr;
     BufferConsumer* _consumer = nullptr;
     NvCudaMapper* _processor = nullptr;
     std::shared_mutex _mutex;
@@ -162,12 +164,6 @@ private:
     uint64_t _numClasses = 0;
     std::string _inputTensorName;
     std::string _outputTensorName;
-
-    //Npp8u* _intImgPlanes[3];
-    //Npp8u* _intModelPlanes[4];
-    //Npp32f* _floatPlanes[3];
-    //Npp32f _consts[3] = {255.0, 255.0, 255.0};
-    //int _intSteps[3];
     Npp8u** _intImgPlanes = nullptr;
     Npp8u** _intModelPlanes = nullptr;
     Npp32f** _floatPlanes = nullptr;
