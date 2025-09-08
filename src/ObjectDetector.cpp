@@ -25,38 +25,6 @@ using namespace nvinfer1;
 using namespace nvonnxparser;
 namespace fs = std::filesystem;
 
-/*static bool Contains(
-    const std::string& str, const std::string& substr
-) 
-{
-    return str.find(substr) != std::string::npos;
-}
-
-static bool DirExists(const std::string& path) 
-{
-    return fs::exists(path) && fs::is_directory(path);
-}
-
-static bool FileExists(const std::string& path) 
-{
-    return fs::exists(path) && fs::is_regular_file(path);
-}
-
-static bool CreateDir(const std::string& path) {
-    bool success = DirExists(path);
-    if(!success) 
-    {
-        try 
-        {
-            success = fs::create_directories(path);
-        }
-        catch(const exception& e) 
-        {
-            LogErr("Failed to create directory, error: " + string(e.what()));
-        }
-    }
-    return success;
-}*/
 
 ObjectDetector::ObjectDetector(
     float minConfidence, float iouThreshold, int maxDetections, 
