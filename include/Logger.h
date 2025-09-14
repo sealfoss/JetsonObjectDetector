@@ -2,7 +2,7 @@
 #define LOGGER_H
 
 #include <string>
-#include <queue>
+#include <vector>
 #include <utility>
 #include <tuple>
 #include <NvInfer.h>
@@ -49,7 +49,7 @@ public:
             LogErr(std::string(msg));
     }
 protected:
-    std::queue<std::tuple<std::string, LogLevel, uint64_t>> _logQueue;
+    std::vector<std::tuple<std::string, LogLevel, uint64_t>> _outbox;
     std::string _filepath = "";
     uint64_t _logNum = 0;
     bool _isLogging = false;
@@ -60,7 +60,9 @@ protected:
     static const std::string GetLogLevelName(const LogLevel level);
     bool CreateLogFile();
     bool WriteLog(const std::tuple<std::string, LogLevel, uint64_t>& msg);
-    virtual void AddMessage(std::tuple<std::string, LogLevel, uint64_t> msg)=0;
+    virtual void AddMessage(
+        std::string text, LogLevel level, uint64_t timestamp
+    ) = 0;
 };
 
 #endif // LOGGER_H

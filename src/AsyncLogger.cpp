@@ -13,9 +13,9 @@ AsyncLogger::AsyncLogger(string logDirectory, LogLevel minLevel)
 
 AsyncLogger::~AsyncLogger()
 {
-    _queueMutex.lock();
+    _outboxMutex.lock();
     _isLogging = false;
-    _queueMutex.unlock();
+    _outboxMutex.unlock();
     _cv.notify_all();
 
     if (_thread.joinable())
@@ -31,32 +31,25 @@ void AsyncLogger::ProcessLogQueue()
 
     while (_isLogging)
     {
-        _cv.wait(lock, [this] { return !_logQueue.empty() || !_isLogging; });
+        _cv.wait(lock, [this] { return !_outbox.empty() || !_isLogging; });
+        _outboxMutex.lock();
 
-        while (!_logQueue.empty())
+        while (!_outbox.empty())
         {
-            msg = _logQueue.front();
-            _logQueue.pop();
-            lock.unlock();
+            msg = _outbox.front();
             WriteLog(msg);
-            lock.lock();
+            _outbox.erase(_outbox.begin());
         }
+
+        _outboxMutex.unlock();
     }
 }
 
-void AsyncLogger::AddMessage(tuple<string, LogLevel, uint64_t> msg)
+void AsyncLogger::AddMessage(string text, LogLevel level, uint64_t timestamp) 
 {
-    try
-    {
-        std::unique_lock lock(_queueMutex);
-        _logQueue.push(msg);
-        lock.unlock();
-        _cv.notify_one();
-    }
-    catch(const std::exception& e)
-    {
-        std::cerr << e.what() << '\n';
-    }
-    
-    
+    tuple<string, LogLevel, uint64_t> msg = make_tuple(text, level, timestamp);
+    _outboxMutex.lock();
+    _outbox.push_back(msg);
+    _outboxMutex.unlock();
+    _cv.notify_one();
 }

@@ -25,7 +25,7 @@
 #define YOLO11_NUM_CHANNELS 3
 
 #define OD_DEFAULT_MIN_CONFIDENCE 0.8f
-#define OD_DEFAULT_IOU_THRESHOLD 0.25f
+#define OD_DEFAULT_IOU_THRESHOLD 0.55f
 #define OD_DEFAULT_MAX_DET 1000
 #define OD_DEFAULT_NUM_IMG_CHANS 4
 #define OD_DEFAULT_NUM_MODEL_CHANS 3
@@ -54,7 +54,7 @@ struct Detection
 {
     int classId = 0;
     float confidence = 0;
-    cv::Rect2f bbox;
+    cv::Rect2i bbox;
 };
 
 
@@ -126,6 +126,8 @@ private:
     int _frameChannels = 0;
     int _frameByteLen = 0;
     int _frameType = 0;
+    int _maxX = 0;
+    int _maxY = 0;
     cv::Mat _cpuDetectionImg;
     cv::Mat _cpuImg;
     cv::Mat _cpuModelOutput;
@@ -172,11 +174,9 @@ private:
     std::vector<std::string> _inputTensorNames;
     std::vector<std::string> _outputTensorNames;
     std::vector<uchar**> _buffs;
-
-    
     std::vector<int> _idxs;
     std::vector<int> _ids;
-    std::vector<cv::Rect> _bboxes;
+    std::vector<cv::Rect2i> _bboxes;
     std::vector<float> _scores;
     std::vector<Detection> _detections;
     
@@ -195,6 +195,7 @@ private:
     inline bool AllocateCudaBuffer(uchar** buffer, std::size_t buffLen);
     inline bool DeallocateCudaBuffer(uchar** buffer);
     inline void WriteDetectionImg();
+
 };
 
 #endif // OBJECTDETECTOR_H

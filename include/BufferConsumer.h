@@ -1,90 +1,38 @@
 #ifndef BUFFERCONSUMER_H
 #define BUFFERCONSUMER_H
 
-#include <shared_mutex>
+#include <mutex>
 #include <vector>
-#include <gstreamer-1.0/gst/gst.h>
 #include <gstreamer-1.0/gst/app/gstappsink.h>
-#include "ObjectDetector.h"
-#include "Logger.h"
 
 #define MAX_BUFFERS 10
+
+class ObjectDetector;
 
 class BufferConsumer
 {
 public:
-    BufferConsumer(ObjectDetector* owner) : _owner(owner) {}
-    ~BufferConsumer() 
-    {
-        GetLastBuffer();
-        UnrefLastBuffer();
-    }
+    BufferConsumer(ObjectDetector* owner);
 
-    bool HasBuffers()
-    {
-        bool hasBuffers;
-        _mutex.lock_shared();
-        hasBuffers = _buffers.size() > 0;
-        _mutex.unlock_shared();
-        return hasBuffers;
-    }
+    ~BufferConsumer();
 
-    bool AddBuffer(GstBuffer* buffer)
-    {
-        GstBuffer* toRemove = nullptr;
-        bool added = false;
+    bool WasBufferUpdated();
 
-        if(_mutex.try_lock())
-        {
-            if(_buffers.size() >= MAX_BUFFERS)
-            {
-                toRemove = _buffers[0];
-                gst_buffer_unref(toRemove);
-                _buffers.erase(_buffers.begin());
-            }
+    bool AddBuffer(GstBuffer* buffer);
 
-            _buffers.push_back(buffer);
-            _mutex.unlock();
-            _owner->Notify();
-            added = true;
-        }
-        return added;
-    }
+    GstBuffer* GetLastBuffer();
 
-    inline void UnrefLastBuffer()
-    {
-        if(_last != nullptr)
-        {
-            gst_buffer_unref(_last);
-            _last = nullptr;
-        }
-    }
+    void UnrefLastBuffer();
 
-    GstBuffer* GetLastBuffer()
-    {
-        GstBuffer* last = nullptr;
-        size_t num;
-        _mutex.lock();
-        num = _buffers.size();
-        if(num > 0)
-        {
-            UnrefLastBuffer();
-            last = _buffers[_buffers.size()-1];
-            for(GstBuffer* buff : _buffers)
-                if(buff != last)
-                    gst_buffer_unref(buff);
-            _buffers = std::vector<GstBuffer*>();
-            _last = last;
-        }
-        _mutex.unlock();
-        return _last;
-    }
 
 private:
     ObjectDetector* _owner = nullptr;
-    GstBuffer* _last = nullptr;
-    std::vector<GstBuffer*> _buffers;
-    std::shared_mutex _mutex;
+    GstBuffer** _current = nullptr;
+    GstBuffer** _last = nullptr;
+    GstBuffer* _buffA = nullptr;
+    GstBuffer* _buffB = nullptr;
+    bool _buffUpdated = false;
+    std::mutex _mutex;
 };
 
 #endif

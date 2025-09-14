@@ -2,8 +2,7 @@
 #define ASYNCLOGGER_H
 
 #include "Logger.h"
-
-#include <shared_mutex>
+#include <mutex>
 #include <thread>
 #include <condition_variable>
 
@@ -17,7 +16,7 @@ public:
     );
     ~AsyncLogger();
 private:
-    std::shared_mutex _queueMutex;
+    std::mutex _outboxMutex;
     std::mutex _condMutex;
     std::thread _thread;
     std::condition_variable _cv;
@@ -25,7 +24,9 @@ private:
     
 
     void ProcessLogQueue();
-    void AddMessage(std::tuple<std::string, LogLevel, uint64_t> msg) override;
+    void AddMessage(
+        std::string text, LogLevel level, uint64_t timestamp
+    ) override;
 };
 
 #endif //ASYNCLOGGER_H

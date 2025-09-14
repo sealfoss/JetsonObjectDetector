@@ -9,6 +9,7 @@
 #include "OutStreamer.h"
 #include "Logger.h"
 #include "nlohmann/json.hpp"
+#include <chrono>
 
 
 #define DEFAULT_MODELPATH "/home/reed/repos/JetsonObjectDetector/models/yolo11m/yolo11m.engine"
@@ -16,17 +17,17 @@
 #define DRONE_PIPELEINE "udpsrc port=5600 ! \
 application/x-rtp,media=video,clock-rate=90000,encoding-name=H265 ! \
 rtph265depay ! h265parse ! nvv4l2decoder ! nvvidconv ! \
-video/x-raw,format=BGRx ! queue ! appsink"
+video/x-raw,format=BGRx ! queue ! appsink name=sink sync=false"
 
 #define UDP_PIPELINE "udpsrc port=1337 ! \
 application/x-rtp,media=video,clock-rate=90000,encoding-name=H265 ! \
 rtph265depay ! h265parse ! nvv4l2decoder ! nvvidconv ! \
 video/x-raw(memory:NVMM),width=1280,height=704,format=RGBA ! \
-appsink name=sink"
+appsink name=sink sync=false"
 
 #define TEST_PIPELINE "videotestsrc do-timestamp=true ! \
 video/x-raw,format=RGBA ! nvvidconv ! video/x-raw(memory:NVMM) ! \
-appsink name=sink"
+appsink name=sink sync=false"
 
 #define DEFAULT_PIPELINE UDP_PIPELINE
 #define DEFAULT_CONFIG_PATH "../DetectionConfig.json"
@@ -38,12 +39,13 @@ namespace fs = filesystem;
 
 struct DetectionConfig
 {
+    string error;
     string pipeline;
     string modelPath;
-    string error;
+    vector<string> clients;
 
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE (
-        DetectionConfig, pipeline, modelPath
+        DetectionConfig, pipeline, modelPath, clients
     )
 };
 
@@ -83,13 +85,14 @@ bool ReadConfigFile(const std::string filepath, DetectionConfig& config)
 
 int main(int argc, char** argv) 
 {
-    Mat detImg, lastImg;
     vector<Detection> detections;
     DetectionConfig config;
     stringstream stream;
     string configPath = argc > 1 ? argv[1] : DEFAULT_CONFIG_PATH;
     ObjectDetector* detector = new ObjectDetector();
-    OutStreamer* outStream = nullptr;
+    OutStreamer* outStream = new OutStreamer();
+    Mat detImg;
+    Scalar color(128, 0, 128, 255);
 
     if(!ReadConfigFile(configPath, config))
     {
@@ -104,46 +107,34 @@ int main(int argc, char** argv)
     while(detector->IsDetecting())
     {
         detections = detector->GetLatestDetections();
-        detector->GetDetectionImg(detImg);
+
         if(detections.size() > 0)
         {
+            detector->GetDetectionImg(detImg);
             for(Detection det : detections)
             {
-                rectangle(detImg, det.bbox, Scalar(0,255,0), 2);
                 stream.str("");
                 stream << "Detected Object, class: " << det.classId
                     << ", confidence: " << det.confidence << ", x: " 
                     << det.bbox.x << ", y: " << det.bbox.y << ", width: " 
                     << det.bbox.width << ", height: " << det.bbox.height;
                 LogDebug(stream.str());
+
+                if(!detImg.empty() && det.bbox.area() > 0)
+                    cv::rectangle(detImg, det.bbox, color, 2);
             }
 
-            cvtColor(detImg, detImg, COLOR_RGB2BGR);
-        }
-        else
-        {
-            LogInfo("No detections made...");
-        }
-        
-        if(!detImg.empty())
-        {
-            if(outStream == nullptr)
-            {
-                outStream = new OutStreamer(
-                    detImg.cols, detImg.rows, 30, 5, "RGBA"
-                );
-                outStream->WriteNextBuffer(detImg);
-                outStream->Start();
-            }
             
-            outStream->WriteNextBuffer(detImg);
-            detImg.copyTo(lastImg);
+            if(!detImg.empty())
+            {
+                if(!outStream->IsStreaming())
+                    outStream->Start();
+                else
+                    outStream->WriteNextBuffer(detImg);
+            }
         }
-        else if(!lastImg.empty())
-            outStream->WriteNextBuffer(lastImg);
     }
 
-    cv::destroyAllWindows();
     LogDebug("Exiting, goodbye.");
     delete detector;
     return 0;

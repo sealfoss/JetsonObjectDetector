@@ -76,13 +76,11 @@ Logger::~Logger()
 void Logger::LogMsg(const string& message, const LogLevel level)
 {
     uint64_t utcNs;
-    tuple<string, LogLevel, uint64_t> msg;
 
     if(level >= s_MinLevel)
     {
         utcNs = TimeStamp::GetUtcTimeNs();
-        msg = make_tuple(message, level, utcNs);
-        s_Instance->AddMessage(msg);
+        s_Instance->AddMessage(message, level, utcNs);
     }
 }
 

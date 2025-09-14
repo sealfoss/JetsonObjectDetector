@@ -3,13 +3,10 @@
 #include "Logger.h"
 #include <cudaEGL.h>
 #include <opencv2/cudafilters.hpp>
-#include <opencv2/core/cuda.hpp>
-#include <gstreamer-1.0/gst/gst.h>
 #include <sstream>
 
 using namespace std;    
 using namespace cv;
-
 
 VideoStreamer::VideoStreamer(
     string pipelineDescription, BufferConsumer* consumer, bool autoStart
@@ -37,7 +34,7 @@ void VideoStreamer::ManageStream()
         gst_element_set_state(_pipeline, GST_STATE_NULL);
     
     }
-    catch(const std::exception& e)
+    catch(const exception& e)
     {
         LogErr("Video Stream failed, Error:\n" + string(e.what()));
     }
@@ -78,7 +75,7 @@ bool VideoStreamer::BuildPipeline()
             }
         }
     }
-    catch(const std::exception& e)
+    catch(const exception& e)
     {
         LogErr("Failed to build pipeline, error: " + string(e.what()));
     }
@@ -214,8 +211,8 @@ gboolean VideoStreamer::BusCall(GstBus* bus, GstMessage* msg, gpointer data)
         {    
             gst_message_parse_error(msg, &err, &debugInfo);
             sstream << "Error from element " << GST_OBJECT_NAME(msg->src) 
-                << ": " << err->message << std::endl << "Debugging info: " 
-                << (debugInfo ? debugInfo : "none") << std::endl;
+                << ": " << err->message << endl << "Debugging info: " 
+                << (debugInfo ? debugInfo : "none") << endl;
             LogErr(sstream.str());
             g_clear_error(&err);
             g_free(debugInfo);
@@ -241,18 +238,25 @@ gboolean VideoStreamer::BusCall(GstBus* bus, GstMessage* msg, gpointer data)
 
 void VideoStreamer::RecordCurrentState(GstState state)
 {
-    _streamMutex.lock();
+    _stateMutex.lock();
     _current = state;
-    _streamMutex.unlock();
+    _stateMutex.unlock();
 }
 
 GstState VideoStreamer::GetCurrentState()
 {
     GstState current;
-    _streamMutex.lock_shared();
+    _stateMutex.lock_shared();
     current = _current;
-    _streamMutex.unlock_shared();
+    _stateMutex.unlock_shared();
     return current;
+}
+
+bool VideoStreamer::IsPlaying()
+{
+    GstState current = GetCurrentState();
+    bool playing = current == GST_STATE_PLAYING;
+    return playing;
 }
 
 bool VideoStreamer::Start()
@@ -261,14 +265,14 @@ bool VideoStreamer::Start()
     LogDebug("Starting video stream with pipeline: " + _description);
     if(BuildPipeline())
     {
-        LockStream(true);
+        //LockStream(true);
         if (!_streaming)
         {
             _streaming = true;
-            _thread = std::thread(&VideoStreamer::ManageStream, this);
+            _thread = thread(&VideoStreamer::ManageStream, this);
             success = true;
         }
-        UnlockStream(true);
+        //UnlockStream(true);
     }
     return success;
 }
@@ -288,11 +292,11 @@ bool VideoStreamer::Stop()
 
 bool VideoStreamer::IsStreaming()
 {
-    bool capturing;
+    bool streaming;
     LockStream();
-    capturing = _streaming;
+    streaming = _streaming;
     UnlockStream();
-    return capturing;
+    return streaming;
 }
 
 bool VideoStreamer::SetStreamingFlag(bool capturing)
@@ -319,4 +323,67 @@ bool VideoStreamer::IsFrameAvailable()
     available = _available;
     UnlockFrame();
     return available;
+}
+
+void VideoStreamer::NotifyAvailable()
+{
+    if(TryLockFrame())
+    {
+        _available = true;
+        UnlockFrame();
+    }
+}
+
+Mat VideoStreamer::GetFrame()
+{
+    Mat frame;
+    if (TryLockFrame())
+    {
+        frame = _cpuFrame.clone();
+        UnlockFrame();
+    }
+    return frame;
+}
+
+void VideoStreamer::SetFrame(const cuda::GpuMat frame)
+{
+    _gpuFrame = frame;
+    _available = false;
+}
+
+bool VideoStreamer::TryLockFrame(bool write)
+{
+    return write ? _frameMutex.try_lock() : _frameMutex.try_lock_shared();
+}
+
+void VideoStreamer::LockStream(bool write)
+{
+    if (write)
+        _streamMutex.lock();
+    else
+        _streamMutex.lock_shared();
+}
+
+void VideoStreamer::UnlockStream(bool write)
+{
+    if (write)
+        _streamMutex.unlock();
+    else
+        _streamMutex.unlock_shared();
+}
+
+void VideoStreamer::LockFrame(bool write)
+{
+    if (write)
+        _frameMutex.lock();
+    else
+        _frameMutex.lock_shared();
+}
+
+void VideoStreamer::UnlockFrame(bool write)
+{
+    if (write)
+        _frameMutex.unlock();
+    else
+        _frameMutex.unlock_shared();
 }

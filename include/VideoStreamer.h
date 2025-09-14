@@ -2,8 +2,8 @@
 #define VIDEOSTREAMER_H
 
 #include <gstreamer-1.0/gst/gst.h>
-#include <gstreamer-1.0/gst/base/gstbasetransform.h>
 #include <gstreamer-1.0/gst/app/gstappsink.h>
+#include <gstreamer-1.0/gst/base/gstbasetransform.h>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/cuda.hpp>
 #include <string>
@@ -41,24 +41,41 @@ public:
         std::string pipelineDescription, BufferConsumer* consumer=nullptr,
         bool autoStart=false
     );
+    
     virtual ~VideoStreamer();
 
     bool Start();
+
     bool Stop();
+
     bool IsFrameAvailable();
+
     void OnFrameAvailable();
+
     bool IsStreaming();
+
+    bool IsPlaying();
+
     bool SetStreamingFlag(bool capturing);
+    
     virtual void ManageStream();
+    
     void RecordCurrentState(GstState state);
+    
     GstState GetCurrentState();
+    
     void SetFrameInfo(
         int width, int height, int channels, int depth, int byteLen
     );
+    
     VideoFrameInfo GetFrameInfo();
+    
     bool WasFrameInfoUpdated();
+    
     static gboolean BusCall(GstBus* bus, GstMessage* msg, gpointer data);
-    static GstFlowReturn OnNewSample(GstAppSink *sink, gpointer data);
+    
+    static GstFlowReturn OnNewSample(GstAppSink* sink, gpointer data);
+    
     static GstPadProbeReturn OnProbePad(
         GstPad *pad, GstPadProbeInfo *info, gpointer gData
     );
@@ -75,6 +92,7 @@ protected:
     bool _available = false;
     std::shared_mutex _streamMutex;
     std::shared_mutex _frameMutex;
+    std::shared_mutex _stateMutex;
     std::thread _thread;
     cv::Mat _cpuFrame;
     cv::cuda::GpuMat _gpuFrame;
@@ -87,68 +105,21 @@ protected:
         GstBaseTransform* btrans, GstBuffer* inbuf
     );
 
-    inline void NotifyAvailable()
-    {
-        if(TryLockFrame())
-        {
-            _available = true;
-            UnlockFrame();
-        }
-    }
+    inline void NotifyAvailable();
 
-    inline cv::Mat GetFrame()
-    {
-        cv::Mat frame;
-        if (TryLockFrame())
-        {
-            frame = _cpuFrame.clone();
-            UnlockFrame();
-        }
-        return frame;
-    }
+    inline cv::Mat GetFrame();
 
-    inline void SetFrame(const cv::cuda::GpuMat frame)
-    {
-        _gpuFrame = frame;
-        _available = false;
-    }
+    inline void SetFrame(const cv::cuda::GpuMat frame);
 
-    inline bool TryLockFrame(bool write=false)
-    {
-        return write ? _frameMutex.try_lock() : _frameMutex.try_lock_shared();
-    }
+    inline bool TryLockFrame(bool write=false);
 
-    inline void LockStream(bool write=false)
-    {
-        if (write)
-            _streamMutex.lock();
-        else
-            _streamMutex.lock_shared();
-    }
+    inline void LockStream(bool write=false);
 
-    inline void UnlockStream(bool write=false)
-    {
-        if (write)
-            _streamMutex.unlock();
-        else
-            _streamMutex.unlock_shared();
-    }
+    inline void UnlockStream(bool write=false);
 
-    inline void LockFrame(bool write=false)
-    {
-        if (write)
-            _frameMutex.lock();
-        else
-            _frameMutex.lock_shared();
-    }
+    inline void LockFrame(bool write=false);
 
-    inline void UnlockFrame(bool write=false)
-    {
-        if (write)
-            _frameMutex.unlock();
-        else
-            _frameMutex.unlock_shared();
-    }
+    inline void UnlockFrame(bool write=false);
 };
 
 #endif // VIDEOSTREAMER_H

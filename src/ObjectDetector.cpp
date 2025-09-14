@@ -43,8 +43,6 @@ ObjectDetector::ObjectDetector(
     gst_init(nullptr, nullptr);
     _minConf = minConfidence;
     _iouThresh = iouThreshold;
-    OutStreamer* outstreamer = new OutStreamer();
-    delete outstreamer;
 }
 
 ObjectDetector::~ObjectDetector()
@@ -100,9 +98,9 @@ bool ObjectDetector::StartDetecting(std::string modelPath)
             _mutex.lock();
             _detecting = true;
             _mutex.unlock();
-            _thread = thread(&ObjectDetector::DetectObjects, this);
             if(_inStream)
                 _inStream->Start();
+            _thread = thread(&ObjectDetector::DetectObjects, this);
             success = true;
         }
     }
@@ -138,19 +136,25 @@ void ObjectDetector::DetectObjects()
     while(IsDetecting())
     {
         _cv.wait(
-            lock, [this] { return _consumer->HasBuffers() || !_detecting; }
+            lock, [this] {return _consumer->WasBufferUpdated() || !_detecting;}
         );
-
-        while(_consumer->HasBuffers())
+        lock.unlock();
+        
+        while(_consumer->WasBufferUpdated())
         {
-            lock.unlock();
+            
             buff = _consumer->GetLastBuffer();
-            if(_inStream->WasFrameInfoUpdated())
-                UpdateFrameDims();
             if(buff != nullptr)
+            {
+                if(_inStream->WasFrameInfoUpdated())
+                    UpdateFrameDims();
                 RunInference(buff);
-            lock.lock();
+                ProcessModelOutput();
+                _consumer->UnrefLastBuffer();
+            }
         }
+
+        lock.lock();
     }
 }
 
@@ -170,13 +174,9 @@ void ObjectDetector::RunInference(GstBuffer* buffer)
         LoadImageInput();
         if(_writeDetectionImg)
             WriteDetectionImg();
-        if(!_gpuImg.empty())
-            LogTrace("Gpu img chans: " + to_string(_gpuImg.channels()));
         _processor->Unmap();
-        _consumer->UnrefLastBuffer();
         _context->enqueueV3(_stream);
         cudaStreamSynchronize(_stream);
-        ProcessModelOutput();
         _mutex.unlock();
     }
 }
@@ -543,7 +543,7 @@ bool ObjectDetector::ProcessModelOutput()
 {
     stringstream stream;
     cv::Mat objClass, prediction, scores;
-    int i, classId;
+    int i, classId, left, right, top, bottom;
     float confidence, x, y, w, h, halfW, halfH;
     float *predictionPtr, *firstElement, *lastElement, *maxElement;
     bool success = false;
@@ -569,7 +569,21 @@ bool ObjectDetector::ProcessModelOutput()
             h = (*(predictionPtr+3));
             halfW = w * 0.5f;
             halfH = h * 0.5f;
-            _bboxes.push_back(Rect2f(x-halfW, y-halfH, x+halfW, y+halfW));
+            left = x - halfW;
+            if(left < 0)
+                left = 0;
+            right = x + halfW;
+            if(right > _maxX)
+                right = _maxX;
+            top = y - halfH;
+            if(top < 0)
+                top = 0;
+            bottom = y + halfH;
+            if(top > _maxY)
+                top = _maxY;
+            _bboxes.push_back(
+                Rect2i(Point2i(left, top), Point2i(right, bottom))
+            );
             _scores.push_back(confidence);
             _ids.push_back(classId);
         }
@@ -592,10 +606,10 @@ bool ObjectDetector::ProcessModelOutput()
             _detectionsMutex.unlock();
         }
 
-        _ids = vector<int>();
-        _idxs = vector<int>();
-        _scores = vector<float>();
-        _bboxes = vector<Rect>();
+        _ids.clear();
+        _idxs.clear();
+        _scores.clear();
+        _bboxes.clear();
     }
 
     return success;
@@ -740,7 +754,9 @@ void ObjectDetector::UpdateFrameDims()
 {
     VideoFrameInfo info = _inStream->GetFrameInfo();
     _frameWidth = info.width;
+    _maxX = _frameWidth - 1;
     _frameHeight = info.height;
+    _maxY = _frameHeight - 1;
     _frameChannels = info.channels;
     _frameByteLen = info.byteLen;
     _frameType = CV_MAKETYPE(CV_8U,_frameChannels);
